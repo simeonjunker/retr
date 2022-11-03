@@ -96,21 +96,39 @@ class CocoCaption(Dataset):
         return image.tensors.squeeze(0), image.mask.squeeze(0), caption, cap_mask
 
 
-def build_dataset(config, mode='training'):
+def read_data(path, return_unique=False, id_name='id'):
+    data = read_json(path)
+
+    if return_unique:
+        raw_anns = data['annotations']
+        # filter for unique ids
+        anns = []
+        stored_ids = []
+        for a in raw_anns:
+            if a[id_name] not in stored_ids:
+                anns.append(a)
+                stored_ids.append(a[id_name])
+        data['annotations'] = anns
+    return data
+
+
+def build_dataset(config, mode='training', return_unique=False):
     if mode == 'training':
         train_dir = os.path.join(config.dir, 'train2017')
         train_file = os.path.join(
             config.dir, 'annotations', 'captions_train2017.json')
-        data = CocoCaption(train_dir, read_json(
-            train_file), max_length=config.max_position_embeddings, limit=config.limit, transform=train_transform, mode='training')
+        ann_data = read_data(train_file, return_unique=return_unique, id_name='image_id')
+        data = CocoCaption(train_dir, ann_data, 
+            max_length=config.max_position_embeddings, limit=config.limit, transform=train_transform, mode='training')
         return data
 
     elif mode == 'validation':
         val_dir = os.path.join(config.dir, 'val2017')
         val_file = os.path.join(
             config.dir, 'annotations', 'captions_val2017.json')
-        data = CocoCaption(val_dir, read_json(
-            val_file), max_length=config.max_position_embeddings, limit=config.limit, transform=val_transform, mode='validation')
+        ann_data = read_data(val_file, return_unique=return_unique, id_name='image_id')
+        data = CocoCaption(val_dir, ann_data, 
+            max_length=config.max_position_embeddings, limit=config.limit, transform=val_transform, mode='validation')
         return data
 
     else:
