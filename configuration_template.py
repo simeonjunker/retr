@@ -39,5 +39,5 @@ class Config(object):
         self.pre_norm = True
 
         # Dataset
-        self.dir = '/home/simeon/Dokumente/Datasets/COCO'
+        self.dir = 'PATH_TO_COCO'
         self.limit = -1
