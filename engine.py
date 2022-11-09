@@ -5,7 +5,17 @@ import math
 import sys
 import tqdm
 
+from collections import defaultdict
+from os.path import dirname, abspath, join
+
+
 from models import utils
+from eval_utils import decode
+
+file_path = dirname(abspath(__file__))
+module_path = join(file_path, 'nlgeval')
+sys.path.append(module_path)
+from nlgeval import NLGEval
 
 
 def train_one_epoch(model, criterion, data_loader,
@@ -63,3 +73,50 @@ def evaluate(model, criterion, data_loader, device):
             pbar.update(1)
         
     return validation_loss / total
+
+
+def normalize_with_tokenizer(sent, tokenizer): 
+    """
+    use tokenizer to normalize annotated captions 
+    (corresponding to system output)
+    """
+    return tokenizer.decode(tokenizer.encode(sent), skip_special_tokens=True)
+
+
+def eval_model(model, dataloader, tokenizer, 
+               config, start_token, metrics_to_omit=[]): 
+    """
+    iterate through val_loader and calculate CIDEr scores for model
+    (only works with batch_size=1 for now)
+    """
+    
+    nlgeval = NLGEval(no_skipthoughts=True, no_glove=True, 
+        metrics_to_omit=metrics_to_omit
+    )
+
+    # construct reference dict
+    references = defaultdict(list)
+    for a in dataloader.dataset.annot_select:
+        references[a[0]].append(a[2])
+        
+    hyps = []
+    refs = []
+
+    # decode imgs in val set
+    for i, (img_id, image, masks, caps, cap_masks) in enumerate(tqdm(data_loader)):
+            
+        h = greedy(model, image, tokenizer, start_token, max_pos_embeddings=config.max_position_embeddings)
+        hyps += [h]
+        
+        img_refs = references[img_id.item()]
+        normalized_refs = [normalize_with_tokenizer(r, tokenizer) for r in img_refs]
+        refs += [normalized_refs]
+        
+    # transpose references to get correct format
+    transposed_refs = list(map(list, zip(*refs)))
+    
+    # calculate cider score from hypotheses and references
+    metrics_dict = nlgeval.compute_metrics(
+        ref_list=transposed_refs, hyp_list=hyps)
+    
+    return metrics_dict
