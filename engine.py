@@ -10,7 +10,7 @@ from os.path import dirname, abspath, join
 
 
 from models import utils
-from eval_utils import decode
+from eval_utils.decode import greedy
 
 file_path = dirname(abspath(__file__))
 module_path = join(file_path, 'nlgeval')
@@ -83,7 +83,7 @@ def normalize_with_tokenizer(sent, tokenizer):
     return tokenizer.decode(tokenizer.encode(sent), skip_special_tokens=True)
 
 
-def eval_model(model, dataloader, tokenizer, 
+def eval_model(model, data_loader, tokenizer, 
                config, start_token, metrics_to_omit=[]): 
     """
     iterate through val_loader and calculate CIDEr scores for model
@@ -96,14 +96,14 @@ def eval_model(model, dataloader, tokenizer,
 
     # construct reference dict
     references = defaultdict(list)
-    for a in dataloader.dataset.annot_select:
+    for a in data_loader.dataset.annot_select:
         references[a[0]].append(a[2])
         
     hyps = []
     refs = []
 
     # decode imgs in val set
-    for i, (img_id, image, masks, caps, cap_masks) in enumerate(tqdm(data_loader)):
+    for i, (img_id, image, masks, caps, cap_masks) in enumerate(tqdm.tqdm(data_loader)):
             
         h = greedy(model, image, tokenizer, start_token, max_pos_embeddings=config.max_position_embeddings)
         hyps += [h]
