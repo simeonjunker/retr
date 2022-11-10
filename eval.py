@@ -8,6 +8,7 @@ import os
 from tqdm import tqdm
 
 from eval_utils.decode import prepare_tokenizer, load_image, greedy
+from train_utils.checkpoints import get_latest_checkpoint
 
 
 def setup_val_dataloader(config):
@@ -41,21 +42,31 @@ def prepare_model(args, config):
     checkpoint_path = args.checkpoint
 
     # load model
-    if checkpoint_path is None:
-        raise NotImplementedError('No model to chose from!')
+    if args.checkpoint is not None:
+      if not os.path.exists(args.checkpoint):
+        raise NotImplementedError('Give valid checkpoint path')
+      else:
+        model,_ = caption.build_model(config)
+        checkpoint = torch.load(args.checkpoint, map_location='cpu')
+        model.load_state_dict(checkpoint['model_state_dict'])
     else:
-        if not os.path.exists(checkpoint_path):
-            raise NotImplementedError('Give valid checkpoint path')
+      print("Checking for checkpoint.")
+      checkpoint_path = config.checkpoint_path
+      if checkpoint_path is None:
+        raise NotImplementedError('No checkpoint path given!')
+      elif not os.path.exists(checkpoint_path):
+        raise NotImplementedError('Give valid checkpoint path')
+      else:
+        latest_cpt = get_latest_checkpoint(config)
+        if latest_cpt is not None:      
+          print("Found checkpoint! Loading!")
+          model,_ = caption.build_model(config)
+          checkpoint = torch.load(os.path.join(checkpoint_path, latest_cpt), map_location='cpu')
+          model.load_state_dict(checkpoint['model_state_dict'])
+        else:
+          print(f"No valid checkpoint found in {checkpoint_path}")
 
-    print("Found checkpoint! Loading!")
-    model, _ = caption.build_model(config)
-
-    print("Loading Checkpoint...")
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
-
-    model.load_state_dict(checkpoint['model']) 
-
-    return model   
+    return model  
 
 
 def main_image(args, config):
@@ -100,7 +111,7 @@ if __name__ == '__main__':
     parser.add_argument('--path', type=str,
                         help='path to image', default=None)
     parser.add_argument('--checkpoint', type=str,
-                        help='checkpoint path', default='./checkpoint.pth')
+                        help='checkpoint path', default=None)
     args = parser.parse_args()
 
     config = Config()

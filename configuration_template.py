@@ -1,6 +1,8 @@
 class Config(object):
     def __init__(self):
 
+        self.prefix = 'coco'
+
         # Learning Rates
         self.lr_backbone = 1e-5
         self.lr = 1e-4
@@ -21,8 +23,10 @@ class Config(object):
         self.seed = 42
         self.batch_size = 32
         self.num_workers = 8
-        self.checkpoint = './checkpoint.pth'
+        self.checkpoint = f'./{self.prefix}_checkpoint.pth'
+        self.checkpoint_path = f'./data/models/{self.prefix}'
         self.clip_max_norm = 0.1
+        self.resume_training = False
 
         # Transformer
         self.hidden_dim = 256
