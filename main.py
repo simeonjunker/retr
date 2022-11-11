@@ -44,7 +44,7 @@ def main(config):
 
     dataset_train = coco.build_dataset(config, mode='training')
     dataset_val = coco.build_dataset(config, mode='validation')
-    dataset_cider = coco.build_dataset(config, model='validation', return_unique=True)
+    dataset_cider = coco.build_dataset(config, mode='validation', return_unique=True)
     print(f"Train: {len(dataset_train)}")
     print(f"Valid: {len(dataset_val)}")
     print(f"CIDEr evaluation: {len(dataset_cider)}")

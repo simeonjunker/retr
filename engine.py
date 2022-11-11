@@ -27,7 +27,7 @@ def train_one_epoch(model, criterion, data_loader,
     total = len(data_loader)
 
     with tqdm.tqdm(total=total) as pbar:
-        for images, masks, caps, cap_masks in data_loader:
+        for img_ids, images, masks, caps, cap_masks in data_loader:
             samples = utils.NestedTensor(images, masks).to(device)
             caps = caps.to(device)
             cap_masks = cap_masks.to(device)
@@ -60,7 +60,7 @@ def evaluate(model, criterion, data_loader, device):
     total = len(data_loader)
 
     with tqdm.tqdm(total=total) as pbar:
-        for images, masks, caps, cap_masks in data_loader:
+        for img_ids, images, masks, caps, cap_masks in data_loader:
             samples = utils.NestedTensor(images, masks).to(device)
             caps = caps.to(device)
             cap_masks = cap_masks.to(device)
