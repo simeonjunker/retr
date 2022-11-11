@@ -40,7 +40,7 @@ def main(config):
     optimizer = torch.optim.AdamW(
         param_dicts, lr=config.lr, weight_decay=config.weight_decay)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, config.lr_drop)
-    tokenizer = prepare_tokenizer()
+    tokenizer, _, _ = prepare_tokenizer()
 
     dataset_train = coco.build_dataset(config, mode='training')
     dataset_val = coco.build_dataset(config, mode='validation')
