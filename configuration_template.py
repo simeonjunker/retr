@@ -27,6 +27,7 @@ class Config(object):
         self.checkpoint_path = f'./data/models/{self.prefix}'
         self.clip_max_norm = 0.1
         self.resume_training = False
+        self.early_stopping = True
 
         # Transformer
         self.hidden_dim = 256

@@ -82,6 +82,7 @@ def main(config):
             print(f'no suitable checkpoints found in {config.checkpoint_path}, starting training from scratch!')
 
     print("Start Training..")
+    cider_scores = [0]
     for epoch in range(config.start_epoch, config.epochs):
         print(f"Epoch: {epoch}")
         epoch_loss = train_one_epoch(
@@ -93,14 +94,22 @@ def main(config):
         print(f"Validation Loss: {validation_loss}")
 
         eval_results = eval_model(model, data_loader_cider, tokenizer, config)
-        print(f"CIDEr score: {eval_results['CIDEr']}")
+        cider_score = eval_results['CIDEr']
+        print(f"CIDEr score: {cider_score}")
 
         checkpoint_name = cpt_template.replace('#', str(epoch))
         save_ckp(
             epoch, model, optimizer, lr_scheduler, 
-            train_loss=epoch_loss, val_loss=validation_loss, cider_score=eval_results['CIDEr'],
+            train_loss=epoch_loss, val_loss=validation_loss, cider_score=cider_score,
             path=os.path.join(config.checkpoint_path, checkpoint_name)
         )
+        
+        if config.early_stopping:
+            if cider_score < min(cider_scores[-5:]):
+                print('no improvements within the last 5 epochs -- early stopping triggered!')
+                break
+
+        cider_scores.append(cider_score)
 
         print()
 
