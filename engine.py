@@ -10,7 +10,7 @@ from os.path import dirname, abspath, join
 
 
 from models import utils
-from eval_utils.decode import greedy
+from eval_utils.decode import greedy_decoding
 
 file_path = dirname(abspath(__file__))
 module_path = join(file_path, 'nlgeval')
@@ -84,7 +84,7 @@ def normalize_with_tokenizer(sent, tokenizer):
 
 
 def eval_model(model, data_loader, tokenizer, 
-               config, start_token, metrics_to_omit=[]): 
+               config, metrics_to_omit=[]): 
     """
     iterate through val_loader and calculate CIDEr scores for model
     (only works with batch_size=1 for now)
@@ -95,28 +95,41 @@ def eval_model(model, data_loader, tokenizer,
     )
 
     # construct reference dict
-    references = defaultdict(list)
-    for a in data_loader.dataset.annot_select:
-        references[a[0]].append(a[2])
-        
-    hyps = []
-    refs = []
+    annotations = defaultdict(list)
+    for a in data_loader.dataset.annot:
+        annotations[a[0]].append(a[2])
+
+    ids, hypotheses, references = [], [], []
+
+    pad_id = tokenizer.convert_tokens_to_ids(tokenizer.pad_token)
+    bos_id = tokenizer.convert_tokens_to_ids(tokenizer.cls_token)
+    eos_id = tokenizer.convert_tokens_to_ids(tokenizer.sep_token)
 
     # decode imgs in val set
-    for i, (img_id, image, masks, caps, cap_masks) in enumerate(tqdm.tqdm(data_loader)):
-            
-        h = greedy(model, image, tokenizer, start_token, max_pos_embeddings=config.max_position_embeddings)
-        hyps += [h]
+    for i, (img_ids, images, masks, caps, cap_masks) in enumerate(tqdm.tqdm(data_loader)):
+
+        # get model predictions
+        hyps = greedy_decoding(
+            images, model, tokenizer, 
+            max_len=config.max_position_embeddings, clean=True, 
+            pad_token=pad_id, bos_token=bos_id, eos_token=eos_id, 
+            device='auto', fast=False
+        )
         
-        img_refs = references[img_id.item()]
-        normalized_refs = [normalize_with_tokenizer(r, tokenizer) for r in img_refs]
-        refs += [normalized_refs]
-        
+        hypotheses += hyps
+
+        # get annotated references
+        refs = [annotations[i.item()] for i in img_ids]
+        normalized_refs = [
+            [normalize_with_tokenizer(r, tokenizer) for r in _refs] for _refs in refs
+        ]
+        references += normalized_refs
+
     # transpose references to get correct format
-    transposed_refs = list(map(list, zip(*refs)))
-    
+    transposed_references = list(map(list, zip(*references)))
+
     # calculate cider score from hypotheses and references
     metrics_dict = nlgeval.compute_metrics(
-        ref_list=transposed_refs, hyp_list=hyps)
+        ref_list=transposed_references, hyp_list=hypotheses)
     
     return metrics_dict

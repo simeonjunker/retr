@@ -8,32 +8,7 @@ import os
 from tqdm import tqdm
 
 from eval_utils.decode import prepare_tokenizer, load_image, greedy
-
-
-def setup_val_dataloader(config):
-    dataset_val = coco.build_dataset(config, mode='validation', return_unique=True)
-    sampler_val = torch.utils.data.SequentialSampler(dataset_val)
-    data_loader_val = DataLoader(dataset_val, 
-                                 batch_size=1,
-                                 sampler=sampler_val, drop_last=False,
-                                 num_workers=config.num_workers)
-    return data_loader_val
-
-
-def evaluate_val_set(
-        config, model, tokenizer,
-        start_token, max_pos_embeddings
-        ):
-    data_loader = setup_val_dataloader(config)
-
-    all_caps = []
-
-    for image, masks, caps, cap_masks in tqdm(data_loader):
-        c = greedy(model, image, tokenizer, start_token, max_pos_embeddings)
-        all_caps.append(c)
-        print(c)
-
-    return all_caps
+from engine import eval_model
 
 
 def prepare_model(args, config):
@@ -53,9 +28,19 @@ def prepare_model(args, config):
     print("Loading Checkpoint...")
     checkpoint = torch.load(checkpoint_path, map_location='cpu')
 
-    model.load_state_dict(checkpoint['model']) 
+    model.load_state_dict(checkpoint['model_state_dict']) 
 
     return model   
+
+
+def setup_val_dataloader(config):
+    dataset_val = coco.build_dataset(config, mode='validation', return_unique=True)
+    sampler_val = torch.utils.data.SequentialSampler(dataset_val)
+    data_loader_val = DataLoader(dataset_val, 
+                                 batch_size=config.batch_size,
+                                 sampler=sampler_val, drop_last=False,
+                                 num_workers=config.num_workers)
+    return data_loader_val
 
 
 def main_image(args, config):
@@ -87,11 +72,11 @@ def main_val_set(args, config):
     # tokenizer
     tokenizer, start_token, end_token = prepare_tokenizer()
 
-    output = evaluate_val_set(
-        config, model, tokenizer, start_token, config.max_position_embeddings
-    )
+    data_loader = setup_val_dataloader(config)
 
-    return output
+    metrics = eval_model(model, data_loader, tokenizer, config)
+
+    return metrics
 
 
 if __name__ == '__main__':
@@ -101,8 +86,12 @@ if __name__ == '__main__':
                         help='path to image', default=None)
     parser.add_argument('--checkpoint', type=str,
                         help='checkpoint path', default='./checkpoint.pth')
+    parser.add_argument('--mode', default='val')
     args = parser.parse_args()
 
     config = Config()
 
-    print(main_val_set(args, config))
+    if args.mode == 'val':
+        print(main_val_set(args, config))
+    elif args.mode == 'image':
+        print(main_image(args, config))
