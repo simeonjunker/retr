@@ -9,8 +9,9 @@ import os
 from models import utils, caption
 from datasets import coco
 from configuration import Config
-from engine import train_one_epoch, evaluate
+from engine import train_one_epoch, evaluate, eval_model
 from train_utils.checkpoints import load_ckp, save_ckp, get_latest_checkpoint
+from eval_utils.decode import prepare_tokenizer
 
 
 def main(config):
@@ -39,14 +40,18 @@ def main(config):
     optimizer = torch.optim.AdamW(
         param_dicts, lr=config.lr, weight_decay=config.weight_decay)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, config.lr_drop)
+    tokenizer = prepare_tokenizer()
 
     dataset_train = coco.build_dataset(config, mode='training')
     dataset_val = coco.build_dataset(config, mode='validation')
+    dataset_cider = coco.build_dataset(config, model='validation', return_unique=True)
     print(f"Train: {len(dataset_train)}")
     print(f"Valid: {len(dataset_val)}")
+    print(f"CIDEr evaluation: {len(dataset_cider)}")
 
     sampler_train = torch.utils.data.RandomSampler(dataset_train)
     sampler_val = torch.utils.data.SequentialSampler(dataset_val)
+    sampler_cider = torch.utils.data.SequentialSampler(dataset_cider)
 
     batch_sampler_train = torch.utils.data.BatchSampler(
         sampler_train, config.batch_size, drop_last=True
@@ -55,6 +60,8 @@ def main(config):
     data_loader_train = DataLoader(
         dataset_train, batch_sampler=batch_sampler_train, num_workers=config.num_workers)
     data_loader_val = DataLoader(dataset_val, config.batch_size,
+                                 sampler=sampler_val, drop_last=False, num_workers=config.num_workers)
+    data_loader_cider = DataLoader(dataset_cider, config.batch_size,
                                  sampler=sampler_val, drop_last=False, num_workers=config.num_workers)
 
     if not os.path.exists(config.checkpoint_path):
@@ -66,7 +73,7 @@ def main(config):
         latest_checkpoint = get_latest_checkpoint(config)
         if latest_checkpoint is not None:
             print(f'loading checkpoint: {latest_checkpoint}')
-            epoch, model, optimizer, lr_scheduler, _, _ = load_ckp(
+            epoch, model, optimizer, lr_scheduler, _, _, _ = load_ckp(
                 model, optimizer, lr_scheduler, 
                 path=os.path.join(config.checkpoint_path, latest_checkpoint)
             )
@@ -85,10 +92,13 @@ def main(config):
         validation_loss = evaluate(model, criterion, data_loader_val, device)
         print(f"Validation Loss: {validation_loss}")
 
+        eval_results = eval_model(model, data_loader_cider, tokenizer, config)
+        print(f"CIDEr score: {eval_results['CIDEr']}")
+
         checkpoint_name = cpt_template.replace('#', str(epoch))
         save_ckp(
             epoch, model, optimizer, lr_scheduler, 
-            train_loss=epoch_loss, val_loss=validation_loss, 
+            train_loss=epoch_loss, val_loss=validation_loss, cider_score=eval_results['CIDEr'],
             path=os.path.join(config.checkpoint_path, checkpoint_name)
         )
 

@@ -14,7 +14,7 @@ def get_latest_checkpoint(config):
     else:
         return None
 
-def save_ckp(epoch, model, optimizer, lr_scheduler, train_loss, val_loss, path):
+def save_ckp(epoch, model, optimizer, lr_scheduler, train_loss, val_loss, cider_score, path):
     """save training checkpoint"""
 
     torch.save({
@@ -24,6 +24,7 @@ def save_ckp(epoch, model, optimizer, lr_scheduler, train_loss, val_loss, path):
         'lr_scheduler_state_dict': lr_scheduler.state_dict(),
         'train_loss': train_loss,
         'val_loss': val_loss,
+        'cider_score': cider_score
     }, path)
 
 
@@ -39,5 +40,6 @@ def load_ckp(model, optimizer, lr_scheduler, path):
     epoch = checkpoint['epoch']
     train_loss = checkpoint['train_loss']
     val_loss = checkpoint['val_loss']
+    cider_score = checkpoint['cider_score']
 
-    return epoch, model, optimizer, lr_scheduler, train_loss, val_loss
+    return epoch, model, optimizer, lr_scheduler, train_loss, val_loss, cider_score
