@@ -7,6 +7,7 @@ import argparse
 from models import caption
 from datasets import coco, utils
 from configuration import Config
+from train_utils.checkpoints import get_latest_checkpoint
 import os
 
 parser = argparse.ArgumentParser(description='Image Captioning')
@@ -16,9 +17,9 @@ parser.add_argument('--checkpoint', type=str, help='checkpoint path', default=No
 args = parser.parse_args()
 image_path = args.path
 version = args.v
-checkpoint_path = args.checkpoint
 
 config = Config()
+checkpoint_path = config.checkpoint_path
 
 if version == 'v1':
     model = torch.hub.load('saahiluppal/catr', 'v1', pretrained=True)
@@ -29,15 +30,17 @@ elif version == 'v3':
 else:
     print("Checking for checkpoint.")
     if checkpoint_path is None:
-      raise NotImplementedError('No model to chose from!')
+      raise NotImplementedError('No checkpoint path given!')
+    elif not os.path.exists(checkpoint_path):
+      raise NotImplementedError('Give valid checkpoint path')
     else:
-      if not os.path.exists(checkpoint_path):
-        raise NotImplementedError('Give valid checkpoint path')
-      print("Found checkpoint! Loading!")
-      model,_ = caption.build_model(config)
-      print("Loading Checkpoint...")
-      checkpoint = torch.load(checkpoint_path, map_location='cpu')
-      model.load_state_dict(checkpoint['model'])
+      latest_cpt = get_latest_checkpoint(config)
+      if latest_cpt is not None:      
+        print("Found checkpoint! Loading!")
+        model,_ = caption.build_model(config)
+        checkpoint = torch.load(os.path.join(checkpoint_path, latest_cpt), map_location='cpu')
+        model.load_state_dict(checkpoint['model_state_dict'])
+
 tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
 start_token = tokenizer.convert_tokens_to_ids(tokenizer._cls_token)

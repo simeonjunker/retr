@@ -10,6 +10,7 @@ from models import utils, caption
 from datasets import coco
 from configuration import Config
 from engine import train_one_epoch, evaluate
+from train_utils.checkpoints import load_ckp, save_ckp, get_latest_checkpoint
 
 
 def main(config):
@@ -56,13 +57,22 @@ def main(config):
     data_loader_val = DataLoader(dataset_val, config.batch_size,
                                  sampler=sampler_val, drop_last=False, num_workers=config.num_workers)
 
-    if os.path.exists(config.checkpoint):
-        print("Loading Checkpoint...")
-        checkpoint = torch.load(config.checkpoint, map_location='cpu')
-        model.load_state_dict(checkpoint['model'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-        config.start_epoch = checkpoint['epoch'] + 1
+    if not os.path.exists(config.checkpoint_path):
+        os.mkdir(config.checkpoint_path)
+    cpt_template = f'{config.prefix}_checkpoint_#.pth'
+
+    if config.resume_training:
+        # load latest checkpoint available
+        latest_checkpoint = get_latest_checkpoint(config)
+        if latest_checkpoint is not None:
+            print(f'loading checkpoint: {latest_checkpoint}')
+            epoch, model, optimizer, lr_scheduler, _, _ = load_ckp(
+                model, optimizer, lr_scheduler, 
+                path=os.path.join(config.checkpoint_path, latest_checkpoint)
+            )
+            config.start_epoch = epoch + 1
+        else: 
+            print(f'no suitable checkpoints found in {config.checkpoint_path}, starting training from scratch!')
 
     print("Start Training..")
     for epoch in range(config.start_epoch, config.epochs):
@@ -72,15 +82,15 @@ def main(config):
         lr_scheduler.step()
         print(f"Training Loss: {epoch_loss}")
 
-        torch.save({
-            'model': model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'lr_scheduler': lr_scheduler.state_dict(),
-            'epoch': epoch,
-        }, config.checkpoint)
-
         validation_loss = evaluate(model, criterion, data_loader_val, device)
         print(f"Validation Loss: {validation_loss}")
+
+        checkpoint_name = cpt_template.replace('#', str(epoch))
+        save_ckp(
+            epoch, model, optimizer, lr_scheduler, 
+            train_loss=epoch_loss, val_loss=validation_loss, 
+            path=os.path.join(config.checkpoint_path, checkpoint_name)
+        )
 
         print()
 
