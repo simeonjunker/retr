@@ -62,7 +62,7 @@ def main(config):
     data_loader_val = DataLoader(dataset_val, config.batch_size,
                                  sampler=sampler_val, drop_last=False, num_workers=config.num_workers)
     data_loader_cider = DataLoader(dataset_cider, config.batch_size,
-                                 sampler=sampler_val, drop_last=False, num_workers=config.num_workers)
+                                 sampler=sampler_cider, drop_last=False, num_workers=config.num_workers)
 
     if not os.path.exists(config.checkpoint_path):
         os.mkdir(config.checkpoint_path)
