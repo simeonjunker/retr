@@ -2,6 +2,7 @@ import torch
 from torch.nn.functional import softmax
 from models.utils import NestedTensor, nested_tensor_from_tensor_list
 from transformers import BertTokenizer
+from PIL import Image
 
 def prepare_tokenizer():
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')

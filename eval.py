@@ -89,13 +89,19 @@ def main_image(args, config):
 
     # tokenizer
     tokenizer, start_token, end_token = prepare_tokenizer()
+    bos_id = tokenizer.convert_tokens_to_ids(tokenizer.cls_token)
+    eos_id = tokenizer.convert_tokens_to_ids(tokenizer.sep_token)
 
     # image handling
     image = load_image(image_path, transform=coco.val_transform)
 
     # decoding
-    output = greedy(model, image, tokenizer, start_token,
-                    config.max_position_embeddings)
+    output_ids = greedy(
+      image, model, 
+      max_len=config.max_position_embeddings, device="auto", 
+      bos_token=bos_id, eos_token=eos_id)
+
+    output = tokenizer.decode(output_ids[0], skip_special_tokens=True)
 
     return output
 
