@@ -1,7 +1,10 @@
+from os.path import join
+
+
 class Config(object):
     def __init__(self):
 
-        self.prefix = 'coco'
+        self.prefix = 'refcoco'
 
         # Learning Rates
         self.lr_backbone = 1e-5
@@ -44,5 +47,7 @@ class Config(object):
         self.pre_norm = True
 
         # Dataset
-        self.dir = 'PATH_TO_COCO'
+        self.dir = 'PATH_TO_COCO'  # COCO base dir (images)
+        self.ref_base = 'PATH_TO_REF_BASE'  # RefCOCO* base dir (annotations)
+        self.ref_dir = join(self.ref_base, self.prefix)
         self.limit = -1
