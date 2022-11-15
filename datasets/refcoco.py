@@ -2,7 +2,6 @@ from torch.utils.data import Dataset
 import torchvision.transforms.functional as TF
 import torchvision as tv
 
-import pandas as pd
 from PIL import Image
 import numpy as np
 import random

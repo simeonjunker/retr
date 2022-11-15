@@ -27,7 +27,7 @@ def train_one_epoch(model, criterion, data_loader,
     total = len(data_loader)
 
     with tqdm.tqdm(total=total) as pbar:
-        for img_ids, images, masks, caps, cap_masks in data_loader:
+        for ann_ids, images, masks, caps, cap_masks in data_loader:
             samples = utils.NestedTensor(images, masks).to(device)
             caps = caps.to(device)
             cap_masks = cap_masks.to(device)
@@ -60,7 +60,7 @@ def evaluate(model, criterion, data_loader, device):
     total = len(data_loader)
 
     with tqdm.tqdm(total=total) as pbar:
-        for img_ids, images, masks, caps, cap_masks in data_loader:
+        for ann_ids, images, masks, caps, cap_masks in data_loader:
             samples = utils.NestedTensor(images, masks).to(device)
             caps = caps.to(device)
             cap_masks = cap_masks.to(device)
@@ -106,7 +106,7 @@ def eval_model(model, data_loader, tokenizer,
     eos_id = tokenizer.convert_tokens_to_ids(tokenizer.sep_token)
 
     # decode imgs in val set
-    for i, (img_ids, images, masks, caps, cap_masks) in enumerate(tqdm.tqdm(data_loader)):
+    for i, (ann_ids, images, masks, caps, cap_masks) in enumerate(tqdm.tqdm(data_loader)):
 
         # get model predictions
         hyps = greedy_decoding(
@@ -119,7 +119,7 @@ def eval_model(model, data_loader, tokenizer,
         hypotheses += hyps
 
         # get annotated references
-        refs = [annotations[i.item()] for i in img_ids]
+        refs = [annotations[i.item()] for i in ann_ids]
         normalized_refs = [
             [normalize_with_tokenizer(r, tokenizer) for r in _refs] for _refs in refs
         ]

@@ -7,7 +7,7 @@ import sys
 import os
 
 from models import utils, caption
-from datasets import coco
+from datasets import refcoco
 from configuration import Config
 from engine import train_one_epoch, evaluate, eval_model
 from train_utils.checkpoints import load_ckp, save_ckp, get_latest_checkpoint
@@ -42,9 +42,10 @@ def main(config):
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, config.lr_drop)
     tokenizer, _, _ = prepare_tokenizer()
 
-    dataset_train = coco.build_dataset(config, mode='training')
-    dataset_val = coco.build_dataset(config, mode='validation')
-    dataset_cider = coco.build_dataset(config, mode='validation', return_unique=True)
+    dataset_train = refcoco.build_dataset(config, mode='training')
+    dataset_val = refcoco.build_dataset(config, mode='validation')
+    dataset_cider = refcoco.build_dataset(
+        config, mode='validation', return_unique=True)
     print(f"Train: {len(dataset_train)}")
     print(f"Valid: {len(dataset_val)}")
     print(f"CIDEr evaluation: {len(dataset_cider)}")
