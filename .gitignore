@@ -1,5 +1,5 @@
 checkpoint.pth
-configuration.py
+*configuration.py
 data/models/*/*
 .vscode
 
