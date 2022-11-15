@@ -1,16 +1,21 @@
 import torch
 from typing import Optional, List
 from torch import Tensor
+import pandas as pd
+import numpy as np
+from PIL import Image
 
 import json
 import os
 
 MAX_DIM = 299
 
+
 def read_json(file_name):
     with open(file_name) as handle:
         out = json.load(handle)
     return out
+
 
 def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
     # TODO make this more general
@@ -25,14 +30,15 @@ def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
         tensor = torch.zeros(batch_shape, dtype=dtype, device=device)
         mask = torch.ones((b, h, w), dtype=torch.bool, device=device)
         for img, pad_img, m in zip(tensor_list, tensor, mask):
-            pad_img[: img.shape[0], : img.shape[1], : img.shape[2]].copy_(img)
-            m[: img.shape[1], :img.shape[2]] = False
+            pad_img[:img.shape[0], :img.shape[1], :img.shape[2]].copy_(img)
+            m[:img.shape[1], :img.shape[2]] = False
     else:
         raise ValueError('not supported')
     return NestedTensor(tensor, mask)
 
 
 class NestedTensor(object):
+
     def __init__(self, tensors, mask: Optional[Tensor]):
         self.tensors = tensors
         self.mask = mask
@@ -53,3 +59,167 @@ class NestedTensor(object):
 
     def __repr__(self):
         return str(self.tensors)
+
+
+def get_refcoco_df(path):
+    """get RefCOCO* annotations as pd.DataFrame
+
+    Args:
+        path (string): path to RefCOCO* base dir
+
+    Returns:
+        pd.DataFrame: RefCOCO* annotations
+    """
+    filepath = os.path.join(path, 'instances.json')
+    with open(filepath) as file:
+        instances = json.load(file)
+        instances = pd.DataFrame(instances['annotations']).set_index('id')
+
+    filepath = os.path.join(path, 'refs(unc).p')
+    captions = pd.read_pickle(filepath)
+    captions = split_sentences(pd.DataFrame(captions))
+
+    captions = pd.merge(captions,
+                        instances[['image_id', 'bbox']],
+                        left_on='ann_id',
+                        right_on='id').set_index('sent_id')
+
+    return captions
+
+
+def get_refcoco_data(path):
+    """fetch data from RefCOCO*
+
+    Args:
+        path (string): path to RefCOCO* base dir
+
+    Returns:
+        tuple: RefCOCO* data (pd.DataFrame), split IDs (dict -> dict -> list)
+    """
+    captions = get_refcoco_df(path)
+
+    # partitions: ['train', 'testB', 'testA', 'val']
+    partitions = list(pd.unique(captions.refcoco_split))
+
+    image_ids, caption_ids = {}, {}
+
+    for part in partitions:
+        image_ids[part] = list(
+            captions.loc[captions.refcoco_split == part].image_id.unique())
+        caption_ids[part] = captions.loc[captions.refcoco_split ==
+                                         part].index.to_list()
+
+    ids = {'image_ids': image_ids, 'caption_ids': caption_ids}
+
+    return (captions, ids)
+
+
+def split_sentences(df):
+    """
+        split sentences in refcoco df
+    """
+    rows = []
+
+    def coco_split(row):
+        for split in ['train', 'val', 'test']:
+            if split in row['file_name']:
+                return split
+        return None
+
+    def unstack_sentences(row):
+        nonlocal rows
+        for i in row.sentences:
+            rows.append({
+                'sent_id': i['sent_id'],
+                'ann_id': row['ann_id'],
+                'caption': i['sent'],
+                'ref_id': row['ref_id'],
+                'refcoco_split': row['split'],
+                'coco_split': coco_split(row)
+            })
+
+    df.apply(lambda x: unstack_sentences(x), axis=1)
+
+    return pd.DataFrame(rows)
+
+
+def filename_from_id(image_id, prefix='', file_ending='.jpg'):
+    """
+    get image filename from id: pad image ids with zeroes,
+    add file prefix and file ending
+    """
+    padded_ids = str(image_id).rjust(12, '0')
+    filename = prefix + padded_ids + file_ending
+
+    return (filename)
+
+
+def crop_image_to_bb(image, bb):
+    """
+    crop image to bounding box annotated for the current region
+    :input:
+        Image (PIL Image)
+        Bounding Box coordinates (list containing values for x, y, w, h)
+    :output:
+        Image (PIL Image) cropped to bounding box coordinates
+    """
+
+    # convert image into numpy array
+    image_array = np.array(image)
+
+    # get bounding box coordinates (round since integers are needed)
+    x, y, w, h = round(bb[0]), round(bb[1]), round(bb[2]), round(bb[3])
+
+    # calculate minimum and maximum values for x and y dimension
+    x_min, x_max = x, x + w
+    y_min, y_max = y, y + h
+
+    # crop image by slicing image array
+    image_cropped = image_array[y_min:y_max, x_min:x_max, :]
+
+    return (Image.fromarray(image_cropped))
+
+
+def compute_position_features(image, bb):
+    """
+    compute position features of bounding box within image
+    7 features (all relative to image dimensions):
+        - x and y coordinates of bb corner points ((x1,y1) and (x2,y2))
+        - bb area
+        - distance between bb center and image center
+        - image orientation
+    :input:
+        Image (PIL Image)
+        Bounding Box coordinates (list containing values for x, y, w, h)
+    :output:
+        numpy array containing the features computed
+    https://github.com/clp-research/clp-vision/blob/master/ExtractFeats/extract.py
+    """
+
+    image = np.array(image)
+    # get image dimensions, split up list containing bb values
+    ih, iw, _ = image.shape
+    x, y, w, h = bb
+
+    # x and y coordinates for bb corners
+    # upper left
+    x1r = x / iw
+    y1r = y / ih
+    # lower right
+    x2r = (x + w) / iw
+    y2r = (y + h) / ih
+
+    # bb area
+    area = (w * h) / (iw * ih)
+
+    # image orientation / ratio between image height and width
+    ratio = iw / ih
+
+    # distance between bb center and image center
+    cx = iw / 2
+    cy = ih / 2
+    bcx = x + w / 2
+    bcy = y + h / 2
+    distance = np.sqrt((bcx - cx)**2 + (bcy - cy)**2) / np.sqrt(cx**2 + cy**2)
+
+    return torch.Tensor([x1r, y1r, x2r, y2r, area, ratio, distance])
