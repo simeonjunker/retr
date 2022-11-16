@@ -15,8 +15,6 @@ MAX_DIM = 299
 
 
 def under_max(image):
-    if image.mode != 'RGB':
-        image = image.convert("RGB")
 
     shape = np.array(image.size, dtype=np.float)
     long_dim = max(shape)
@@ -98,6 +96,10 @@ class RefCocoCaption(Dataset):
         ann_id, image_file, caption, bb = self.annot_select[idx]
         image = Image.open(os.path.join(self.root, 'train2014', image_file))
 
+        # convert if necessary
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+
         # crop image to bounding box
         image = crop_image_to_bb(image, bb)
 
@@ -108,7 +110,7 @@ class RefCocoCaption(Dataset):
         caption_encoded = self.tokenizer.encode_plus(
             caption,
             max_length=self.max_length,
-            pad_to_max_length=True,
+            padding='max_length',
             return_attention_mask=True,
             return_token_type_ids=False,
             truncation=True)
