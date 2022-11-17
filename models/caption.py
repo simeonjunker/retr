@@ -12,7 +12,7 @@ class Caption(nn.Module):
         super().__init__()
         self.backbone = backbone
         self.input_proj = nn.Conv2d(
-            backbone.num_channels, hidden_dim, kernel_size=1)
+            in_channels=backbone.num_channels, out_channels=hidden_dim, kernel_size=1)
         self.transformer = transformer
         self.mlp = MLP(hidden_dim, 512, vocab_size, 3)
 

@@ -66,13 +66,14 @@ class BackboneBase(nn.Module):
         self.num_channels = num_channels
 
     def forward(self, tensor_list: NestedTensor):
-        xs = self.body(tensor_list.tensors)
+        xs = self.body(tensor_list.tensors)  # OrderedDict: LayerID -> tensor [b, channels, 19, 19]
         out: Dict[str, NestedTensor] = {}
         for name, x in xs.items():
             m = tensor_list.mask
             assert m is not None
+            # interpolate mask to ResNet output shape
             mask = F.interpolate(m[None].float(), size=x.shape[-2:]).to(torch.bool)[0]
-            out[name] = NestedTensor(x, mask)
+            out[name] = NestedTensor(x, mask)  # merge Resnet feats with mask
         return out
 
 
@@ -102,7 +103,9 @@ class Joiner(nn.Sequential):
             # position encoding
             pos.append(self[1](x).to(x.tensors.dtype))
 
-        return out, pos
+        # out: list of NestedTensors(feats, masks) -> ([b, channels, x_dim, y_dim], [b, x_dim, y_dim])
+        # pos: list of position encodings -> [b, pos_feats, x_dim, y_dim]
+        return out, pos  
 
 
 def build_backbone(config):
