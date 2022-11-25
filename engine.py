@@ -84,7 +84,8 @@ def normalize_with_tokenizer(sent, tokenizer):
 
 
 def eval_model(model, data_loader, tokenizer, 
-               config, metrics_to_omit=[]): 
+               config, metrics_to_omit=[],
+               print_samples=False): 
     """
     iterate through val_loader and calculate CIDEr scores for model
     (only works with batch_size=1 for now)
@@ -99,7 +100,7 @@ def eval_model(model, data_loader, tokenizer,
     for a in data_loader.dataset.annot:
         annotations[a[0]].append(a[2])
 
-    ids, hypotheses, references = [], [], []
+    ids, hypotheses, ids_hypotheses, references = [], [], [], []
 
     pad_id = tokenizer.convert_tokens_to_ids(tokenizer.pad_token)
     bos_id = tokenizer.convert_tokens_to_ids(tokenizer.cls_token)
@@ -118,6 +119,11 @@ def eval_model(model, data_loader, tokenizer,
         
         hypotheses += hyps
 
+        ids_hyps = [{'ann_id': i, 'expression': h} for i,h in zip(ann_ids.tolist(), hyps)]
+        ids_hypotheses += ids_hyps
+        if print_samples:
+            print(*ids_hyps, sep='\n')
+
         # get annotated references
         refs = [annotations[i.item()] for i in ann_ids]
         normalized_refs = [
@@ -132,4 +138,4 @@ def eval_model(model, data_loader, tokenizer,
     metrics_dict = nlgeval.compute_metrics(
         ref_list=transposed_references, hyp_list=hypotheses)
     
-    return metrics_dict
+    return metrics_dict, ids_hypotheses

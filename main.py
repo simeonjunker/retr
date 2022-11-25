@@ -94,7 +94,7 @@ def main(config):
         validation_loss = evaluate(model, criterion, data_loader_val, device)
         print(f"Validation Loss: {validation_loss}")
 
-        eval_results = eval_model(model, data_loader_cider, tokenizer, config)
+        eval_results, _ = eval_model(model, data_loader_cider, tokenizer, config)
         cider_score = eval_results['CIDEr']
         print(f"CIDEr score: {cider_score}")
 
