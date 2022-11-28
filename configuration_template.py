@@ -31,6 +31,8 @@ class Config(object):
         self.clip_max_norm = 0.1
         self.resume_training = False
         self.early_stopping = True
+        self.use_global_features = False
+        self.use_location_features = False
 
         # Transformer
         self.hidden_dim = 256

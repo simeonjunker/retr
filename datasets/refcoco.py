@@ -9,7 +9,7 @@ import os
 
 from transformers import BertTokenizer
 
-from .utils import nested_tensor_from_tensor_list, crop_image_to_bb, get_refcoco_data
+from .utils import nested_tensor_from_tensor_list, crop_image_to_bb, get_refcoco_data, compute_position_features
 
 MAX_DIM = 299
 
@@ -62,13 +62,18 @@ class RefCocoCaption(Dataset):
                  max_length,
                  limit,
                  transform=train_transform,
-                 return_unique=False):
+                 return_unique=False,
+                 return_global_context=False,
+                 return_location_features=False
+                 ):
         super().__init__()
 
         self.root = root
         self.transform = transform
         self.annot = [(entry['ann_id'], self._process(entry['image_id']),
                        entry['caption'], entry['bbox']) for entry in data]
+        self.return_global_context = return_global_context
+        self.return_location_features = return_location_features
 
         if return_unique:
             # filter for unique ids
@@ -100,12 +105,25 @@ class RefCocoCaption(Dataset):
         if image.mode != 'RGB':
             image = image.convert('RGB')
 
-        # crop image to bounding box
-        image = crop_image_to_bb(image, bb)
-
+        # target bb
+        target_image = crop_image_to_bb(image, bb)
         if self.transform:
-            image = self.transform(image)
-        image = nested_tensor_from_tensor_list(image.unsqueeze(0))
+            target_image = self.transform(target_image)
+        target_image = nested_tensor_from_tensor_list(target_image.unsqueeze(0))
+        encoder_input = [target_image.tensors.squeeze(0), target_image.mask.squeeze(0)]
+
+        # global context
+        if self.return_global_context:
+            global_image = image
+            if self.transform:
+                global_image = self.transform(global_image)
+            global_image = nested_tensor_from_tensor_list(global_image.unsqueeze(0))
+            encoder_input += [global_image.tensors.squeeze(0), global_image.mask.squeeze(0)]
+
+        # location features
+        if self.return_location_features:
+            position_feature = compute_position_features(image, bb)
+            encoder_input.append(position_feature)
 
         caption_encoded = self.tokenizer.encode_plus(
             caption,
@@ -119,8 +137,12 @@ class RefCocoCaption(Dataset):
         cap_mask = (1 -
                     np.array(caption_encoded['attention_mask'])).astype(bool)
 
-        return ann_id, image.tensors.squeeze(0), image.mask.squeeze(
-            0), caption, cap_mask
+        # encoder_input: 
+        #   if global=False, location=False: t_img, t_mask
+        #   if global=True, location=False: t_img, t_mask, g_img, g_mask
+        #   if global=False, location=True: t_img, t_mask, loc
+        #   if global=True, location=True: t_img, t_mask, g_img, g_mask, loc
+        return ann_id, *encoder_input, caption, cap_mask
 
 
 def build_dataset(config,
@@ -150,5 +172,7 @@ def build_dataset(config,
                              max_length=config.max_position_embeddings,
                              limit=config.limit,
                              transform=transform,
-                             return_unique=return_unique)
+                             return_unique=return_unique,
+                             return_global_context=config.use_global_features,
+                             return_location_features=config.use_location_features)
     return dataset

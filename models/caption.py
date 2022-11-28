@@ -8,11 +8,13 @@ from .transformer import build_transformer
 
 
 class Caption(nn.Module):
+
     def __init__(self, backbone, transformer, hidden_dim, vocab_size):
         super().__init__()
         self.backbone = backbone
-        self.input_proj = nn.Conv2d(
-            in_channels=backbone.num_channels, out_channels=hidden_dim, kernel_size=1)
+        self.input_proj = nn.Conv2d(in_channels=backbone.num_channels,
+                                    out_channels=hidden_dim,
+                                    kernel_size=1)
         self.transformer = transformer
         self.mlp = MLP(hidden_dim, 512, vocab_size, 3)
 
@@ -25,8 +27,51 @@ class Caption(nn.Module):
 
         assert mask is not None
 
-        hs = self.transformer(self.input_proj(src), mask,
-                              pos[-1], target, target_mask)
+        hs = self.transformer(self.input_proj(src), mask, pos[-1], target,
+                              target_mask)
+        out = self.mlp(hs.permute(1, 0, 2))
+        return out
+
+
+class CaptionGlobal(nn.Module):
+
+    # TODO separate backbones / position encodings for local and global features?
+
+    def __init__(self, backbone, transformer, hidden_dim, vocab_size):
+        super().__init__()
+        self.backbone = backbone
+        self.input_proj = nn.Conv2d(in_channels=backbone.num_channels,
+                                    out_channels=hidden_dim,
+                                    kernel_size=1)
+        self.transformer = transformer
+        self.mlp = MLP(hidden_dim, 512, vocab_size, 3)
+
+    def forward(self, t_samples, g_samples, target, target_mask):
+
+        # target features
+        if not isinstance(t_samples, NestedTensor):
+            t_samples = nested_tensor_from_tensor_list(t_samples)
+        t_features, t_pos = self.backbone(t_samples)
+        t_src, t_mask = t_features[-1].decompose()
+        t_src = self.input_proj(t_src)
+        t_pos = t_pos[-1]
+        assert t_mask is not None
+
+        # global features
+        if not isinstance(g_samples, NestedTensor):
+            g_samples = nested_tensor_from_tensor_list(g_samples)
+        g_features, g_pos = self.backbone(g_samples)
+        g_src, g_mask = g_features[-1].decompose()
+        g_src = self.input_proj(g_src)
+        g_pos = g_pos[-1]
+        assert g_mask is not None
+
+        # concatenate
+        src = torch.concat([t_src, g_src], 3)
+        pos = torch.concat([t_pos, g_pos], 3)
+        mask = torch.concat([t_mask, g_mask], 2)
+
+        hs = self.transformer(src, mask, pos, target, target_mask)
         out = self.mlp(hs.permute(1, 0, 2))
         return out
 
@@ -38,8 +83,8 @@ class MLP(nn.Module):
         super().__init__()
         self.num_layers = num_layers
         h = [hidden_dim] * (num_layers - 1)
-        self.layers = nn.ModuleList(nn.Linear(n, k)
-                                    for n, k in zip([input_dim] + h, h + [output_dim]))
+        self.layers = nn.ModuleList(
+            nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim]))
 
     def forward(self, x):
         for i, layer in enumerate(self.layers):
@@ -51,7 +96,28 @@ def build_model(config):
     backbone = build_backbone(config)
     transformer = build_transformer(config)
 
-    model = Caption(backbone, transformer, config.hidden_dim, config.vocab_size)
+    use_global = config.use_global_features
+    use_location = config.use_location_features
+
+    print(f'global features: {use_global}, location features: {use_location}')
+
+    if use_global and not use_location:
+        # global features
+        model = CaptionGlobal(backbone, transformer, config.hidden_dim,
+                              config.vocab_size)
+    elif not use_global and use_location:
+        # loc features
+        raise NotImplementedError()
+    elif use_global and use_location:
+        # both global image and loc features
+        raise NotImplementedError()
+    else:
+        # default / no global image or loc features
+        model = Caption(backbone, transformer, config.hidden_dim,
+                        config.vocab_size)
+
+    print(f'{type(model)} model built')
+
     criterion = torch.nn.CrossEntropyLoss()
 
     return model, criterion
