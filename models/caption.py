@@ -123,8 +123,8 @@ class CaptionLoc(nn.Module):
         # location features
 
         loc_src = self.loc_proj(loc_feats).unsqueeze(-1)
-        loc_pos = torch.ones_like(loc_src).unsqueeze(-1)
-        loc_masks = torch.zeros((loc_feats.shape[0], 1)).bool()
+        loc_pos = torch.ones_like(loc_src)
+        loc_masks = torch.zeros((loc_feats.shape[0], 1)).bool().to(t_mask.device)
 
         # concatenate
         src = torch.concat([t_src, loc_src], 2)
