@@ -127,7 +127,7 @@ def eval_model(model, data_loader, tokenizer,
     (only works with batch_size=1 for now)
     """
 
-    # TODO adapt
+    model.eval()
 
     nlgeval = NLGEval(no_skipthoughts=True, no_glove=True,
         metrics_to_omit=metrics_to_omit
