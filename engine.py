@@ -43,7 +43,7 @@ def pack_encoder_inputs(encoder_input,
         # default / target only
         t_img, t_mask = encoder_input
         # return as tuple w/ len 1
-        return (NestedTensor(t_img, t_mask), )
+        return (NestedTensor(t_img, t_mask).to(device), )
 
 
 def train_one_epoch(model, criterion, data_loader,
