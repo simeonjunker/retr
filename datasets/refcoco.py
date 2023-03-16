@@ -121,29 +121,7 @@ class RefCocoCaption(Dataset):
         ann_id, image_file, caption, bb = self.annot_select[idx]
         image = Image.open(os.path.join(self.root, 'train2014', image_file))
 
-        # convert if necessary
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
-
-        # target bb
-        target_image = crop_image_to_bb(image, bb)
-        if self.transform:
-            target_image = self.transform(target_image)
-        target_image = nested_tensor_from_tensor_list(target_image.unsqueeze(0))
-        encoder_input = [target_image.tensors.squeeze(0), target_image.mask.squeeze(0)]
-
-        # global context
-        if self.return_global_context:
-            global_image = image
-            if self.transform:
-                global_image = self.transform(global_image)
-            global_image = nested_tensor_from_tensor_list(global_image.unsqueeze(0))
-            encoder_input += [global_image.tensors.squeeze(0), global_image.mask.squeeze(0)]
-
-        # location features
-        if self.return_location_features:
-            position_feature = compute_position_features(image, bb)
-            encoder_input.append(position_feature)
+        # CAPTION
 
         caption_encoded = self.tokenizer.encode_plus(
             caption,
@@ -157,11 +135,48 @@ class RefCocoCaption(Dataset):
         cap_mask = (1 -
                     np.array(caption_encoded['attention_mask'])).astype(bool)
 
-        # encoder_input: 
-        #   if global=False, location=False: t_img, t_mask
-        #   if global=True, location=False: t_img, t_mask, g_img, g_mask
-        #   if global=False, location=True: t_img, t_mask, loc
-        #   if global=True, location=True: t_img, t_mask, g_img, g_mask, loc
+        # IMAGE
+
+        # convert if necessary
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+
+        # without transforms: return images , locations and captions 
+        # (for demo / development)
+        if self.transform == None:
+            target_image = crop_image_to_bb(image, bb)
+            global_image = image
+            position_feature = compute_position_features(image, bb)
+            return ann_id, target_image, global_image, position_feature, caption, cap_mask
+
+        # with transforms: proceed with building encoder input
+        #   if global=False, location=False: 
+        #       encoder_input = t_img, t_mask
+        #   if global=True, location=False: 
+        #       encoder_input = t_img, t_mask, g_img, g_mask
+        #   if global=False, location=True: 
+        #       encoder_input = t_img, t_mask, loc
+        #   if global=True, location=True: 
+        #       encoder_input = t_img, t_mask, g_img, g_mask, loc
+
+        # target bb
+        target_image = crop_image_to_bb(image, bb)
+        target_image = self.transform(target_image)
+        target_image = nested_tensor_from_tensor_list(target_image.unsqueeze(0))
+        encoder_input = [target_image.tensors.squeeze(0), target_image.mask.squeeze(0)]
+
+        if self.return_global_context:
+            # add global context
+            global_image = image
+            global_image = self.transform(global_image)
+            global_image = nested_tensor_from_tensor_list(global_image.unsqueeze(0))
+            encoder_input += [global_image.tensors.squeeze(0), global_image.mask.squeeze(0)]
+
+        if self.return_location_features:
+            # add location features
+            position_feature = compute_position_features(image, bb)
+            encoder_input.append(position_feature)
+
         return ann_id, *encoder_input, caption, cap_mask
 
 
