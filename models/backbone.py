@@ -83,10 +83,13 @@ class Backbone(BackboneBase):
                  train_backbone: bool,
                  return_interm_layers: bool,
                  dilation: bool):
-        backbone = getattr(torchvision.models, name)(
+        backbone_model = getattr(torchvision.models, name.lower())
+        backbone_pretrained = is_main_process()
+        backbone_weights = getattr(torchvision.models, name + '_Weights').DEFAULT if backbone_pretrained else None
+        backbone = backbone_model(
             replace_stride_with_dilation=[False, False, dilation],
-            pretrained=is_main_process(), norm_layer=FrozenBatchNorm2d)
-        num_channels = 512 if name in ('resnet18', 'resnet34') else 2048
+            weights=backbone_weights, norm_layer=FrozenBatchNorm2d)
+        num_channels = 512 if name in ('ResNet18', 'ResNet34') else 2048
         super().__init__(backbone, train_backbone, num_channels, return_interm_layers)
 
 
