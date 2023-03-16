@@ -22,6 +22,9 @@ class Caption(nn.Module):
         self.mlp = MLP(hidden_dim, 512, vocab_size, 3)
 
     def forward(self, samples, target, target_mask):
+
+        # target features
+
         if not isinstance(samples, NestedTensor):
             samples = nested_tensor_from_tensor_list(samples)
 
@@ -29,7 +32,6 @@ class Caption(nn.Module):
         src, mask = features.decompose()
         src = self.input_proj(src)
         assert mask is not None
-
         # flatten vectors
         src = src.flatten(2)
         mask = mask.flatten(1)
@@ -60,7 +62,6 @@ class CaptionGlobal(nn.Module):
     def forward(self, t_samples, g_samples, target, target_mask):
 
         # target features
-
         if not isinstance(t_samples, NestedTensor):
             t_samples = nested_tensor_from_tensor_list(t_samples)
         t_features = self.backbone(t_samples)['0']
@@ -72,7 +73,6 @@ class CaptionGlobal(nn.Module):
         t_mask = t_mask.flatten(1)
 
         # global features
-
         if not isinstance(g_samples, NestedTensor):
             g_samples = nested_tensor_from_tensor_list(g_samples)
         g_features = self.backbone(g_samples)['0']
@@ -109,10 +109,9 @@ class CaptionLoc(nn.Module):
         self.transformer = transformer
         self.mlp = MLP(hidden_dim, 512, vocab_size, 3)
 
-    def forward(self, t_samples, g_samples, loc_feats, target, target_mask):
+    def forward(self, t_samples, loc_feats, target, target_mask):
 
         # target features
-
         if not isinstance(t_samples, NestedTensor):
             t_samples = nested_tensor_from_tensor_list(t_samples)
         t_features = self.backbone(t_samples)['0']
@@ -123,27 +122,14 @@ class CaptionLoc(nn.Module):
         t_src = t_src.flatten(2)
         t_mask = t_mask.flatten(1)
 
-        # global features
-
-        if not isinstance(g_samples, NestedTensor):
-            g_samples = nested_tensor_from_tensor_list(g_samples)
-        g_features = self.backbone(g_samples)['0']
-        g_src, g_mask = g_features.decompose()
-        g_src = self.input_proj(g_src)
-        assert g_mask is not None
-        # flatten vectors
-        g_src = g_src.flatten(2)
-        g_mask = g_mask.flatten(1)
-
         # location features
-
         loc_src = self.loc_proj(loc_feats).unsqueeze(-1)
         loc_masks = torch.zeros(
             (loc_feats.shape[0], 1)).bool().to(t_mask.device)
 
         # concatenate
-        src = torch.concat([t_src, g_src, loc_src], 2)
-        mask = torch.concat([t_mask, g_mask, loc_masks], 1)
+        src = torch.concat([t_src, loc_src], 2)
+        mask = torch.concat([t_mask, loc_masks], 1)
 
         # get positional encoding
         pos = self.positional_encoding(src)
@@ -151,7 +137,7 @@ class CaptionLoc(nn.Module):
         hs = self.transformer(src, mask, pos, target, target_mask)
         out = self.mlp(hs.permute(1, 0, 2))
         return out
-
+    
 
 class CaptionGlobalLoc(nn.Module):
 
@@ -170,7 +156,6 @@ class CaptionGlobalLoc(nn.Module):
     def forward(self, t_samples, g_samples, loc_feats, target, target_mask):
 
         # target features
-
         if not isinstance(t_samples, NestedTensor):
             t_samples = nested_tensor_from_tensor_list(t_samples)
         t_features = self.backbone(t_samples)['0']
@@ -181,15 +166,25 @@ class CaptionGlobalLoc(nn.Module):
         t_src = t_src.flatten(2)
         t_mask = t_mask.flatten(1)
 
-        # location features
+        # global features
+        if not isinstance(g_samples, NestedTensor):
+            g_samples = nested_tensor_from_tensor_list(g_samples)
+        g_features = self.backbone(g_samples)['0']
+        g_src, g_mask = g_features.decompose()
+        g_src = self.input_proj(g_src)
+        assert g_mask is not None
+        # flatten vectors
+        g_src = g_src.flatten(2)
+        g_mask = g_mask.flatten(1)
 
+        # location features
         loc_src = self.loc_proj(loc_feats).unsqueeze(-1)
         loc_masks = torch.zeros(
             (loc_feats.shape[0], 1)).bool().to(t_mask.device)
 
         # concatenate
-        src = torch.concat([t_src, loc_src], 2)
-        mask = torch.concat([t_mask, loc_masks], 1)
+        src = torch.concat([t_src, g_src, loc_src], 2)
+        mask = torch.concat([t_mask, g_mask, loc_masks], 1)
 
         # get positional encoding
         pos = self.positional_encoding(src)

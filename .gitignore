@@ -2,6 +2,8 @@ checkpoint.pth
 *configuration.py
 data/models/*/*
 .vscode
+bash
+data/results
 
 
 # Created by https://www.toptal.com/developers/gitignore/api/python
