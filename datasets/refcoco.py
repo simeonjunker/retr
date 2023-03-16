@@ -1,5 +1,6 @@
 from torch.utils.data import Dataset
 import torchvision.transforms.functional as TF
+from torchvision.transforms import Lambda, ColorJitter, RandomHorizontalFlip, ToTensor, Resize, CenterCrop, ToTensor, Normalize, Compose 
 import torchvision as tv
 
 from PIL import Image
@@ -36,22 +37,42 @@ class RandomRotation:
         return TF.rotate(x, angle, expand=True)
 
 
-train_transform = tv.transforms.Compose([
-    RandomRotation(),
-    tv.transforms.Lambda(under_max),
-    tv.transforms.ColorJitter(brightness=[0.5, 1.3],
-                              contrast=[0.8, 1.5],
-                              saturation=[0.2, 1.5]),
-    tv.transforms.RandomHorizontalFlip(),
-    tv.transforms.ToTensor(),
-    tv.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-])
+def get_transforms(mode, config):
+    # get default transformations for pretrained model
+    model_weights = getattr(tv.models, config.backbone + '_Weights')
+    default_transforms = model_weights.DEFAULT.transforms()
 
-val_transform = tv.transforms.Compose([
-    tv.transforms.Lambda(under_max),
-    tv.transforms.ToTensor(),
-    tv.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-])
+    # build train or val transformations
+    # (using model defaults for size and normalization)
+    if mode == 'train': 
+        transform = Compose([
+            RandomRotation(),  # NOTE good idea for REG?
+            Lambda(under_max),
+            ColorJitter(brightness=[0.5, 1.3],
+                        contrast=[0.8, 1.5],
+                        saturation=[0.2, 1.5]),
+            RandomHorizontalFlip(),  # NOTE good idea for REG?
+            Resize(size=default_transforms.resize_size, 
+                   interpolation=default_transforms.interpolation),
+            CenterCrop(size=default_transforms.crop_size),
+            ToTensor(),
+            Normalize(mean=default_transforms.mean, 
+                      std=default_transforms.std),
+        ])
+    elif mode == 'val':
+        transform = Compose([
+            Lambda(under_max),
+            Resize(size=default_transforms.resize_size, 
+                   interpolation=default_transforms.interpolation),
+            CenterCrop(size=default_transforms.crop_size),
+            ToTensor(),
+            Normalize(mean=default_transforms.mean, 
+                      std=default_transforms.std),
+        ])
+    else:
+        raise NotImplementedError(f'transforms mode {mode} is not implemented')
+    
+    return transform
 
 
 class RefCocoCaption(Dataset):
@@ -60,8 +81,7 @@ class RefCocoCaption(Dataset):
                  data,
                  root,
                  max_length,
-                 limit,
-                 transform=train_transform,
+                 transform=None,
                  return_unique=False,
                  return_global_context=False,
                  return_location_features=False
@@ -150,8 +170,10 @@ def build_dataset(config,
                   transform='auto',
                   return_unique=False):
 
+    # get refcoco data
     full_data, ids = get_refcoco_data(config.ref_dir)
 
+    # select data partition
     if mode.lower() in ['training', 'train']:
         data = full_data.loc[ids['caption_ids']['train']]
     elif mode.lower() in ['validation', 'val']:
@@ -163,14 +185,17 @@ def build_dataset(config,
     else:
         raise NotImplementedError(f"{mode} not supported")
 
+    # select transformation
     if transform == 'auto':
-        transform = train_transform if mode.lower() in ['training', 'train'
-                                                        ] else val_transform
+        if mode.lower() in ['training', 'train']: 
+            transform = get_transforms('train', config)
+        else:
+            transform = get_transforms('val', config)
 
+    # build dataset
     dataset = RefCocoCaption(data=data.to_dict(orient='records'),
                              root=config.dir,
                              max_length=config.max_position_embeddings,
-                             limit=config.limit,
                              transform=transform,
                              return_unique=return_unique,
                              return_global_context=config.use_global_features,
