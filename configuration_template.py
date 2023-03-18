@@ -33,6 +33,7 @@ class Config(object):
         self.early_stopping = True
         self.use_global_features = False
         self.use_location_features = False
+        self.verbose = True
 
         # Transformer
         self.hidden_dim = 256

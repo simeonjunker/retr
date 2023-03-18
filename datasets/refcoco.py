@@ -75,13 +75,21 @@ def get_transforms(mode, config):
     return transform
 
 
+def auto_transform(mode, config):
+    if mode.lower() in ['training', 'train']: 
+        return get_transforms('train', config)
+    else:
+        return get_transforms('val', config)
+
+
 class RefCocoCaption(Dataset):
 
     def __init__(self,
                  data,
                  root,
                  max_length,
-                 transform=None,
+                 target_transform=None,
+                 context_transform=None,
                  return_unique=False,
                  return_global_context=False,
                  return_location_features=False
@@ -89,7 +97,8 @@ class RefCocoCaption(Dataset):
         super().__init__()
 
         self.root = root
-        self.transform = transform
+        self.target_transform = target_transform
+        self.context_transform = context_transform if context_transform is not None else target_transform
         self.annot = [(entry['ann_id'], self._process(entry['image_id']),
                        entry['caption'], entry['bbox']) for entry in data]
         self.return_global_context = return_global_context
@@ -141,13 +150,7 @@ class RefCocoCaption(Dataset):
         if image.mode != 'RGB':
             image = image.convert('RGB')
 
-        # without transforms: return images , locations and captions 
-        # (for demo / development)
-        if self.transform == None:
-            target_image = crop_image_to_bb(image, bb)
-            global_image = image
-            position_feature = compute_position_features(image, bb)
-            return ann_id, target_image, global_image, position_feature, caption, cap_mask
+        # TODO add option for notebook visualization
 
         # with transforms: proceed with building encoder input
         #   if global=False, location=False: 
@@ -161,14 +164,14 @@ class RefCocoCaption(Dataset):
 
         # target bb
         target_image = crop_image_to_bb(image, bb)
-        target_image = self.transform(target_image)
+        target_image = self.target_transform(target_image)
         target_image = nested_tensor_from_tensor_list(target_image.unsqueeze(0))
         encoder_input = [target_image.tensors.squeeze(0), target_image.mask.squeeze(0)]
 
         if self.return_global_context:
             # add global context
             global_image = image
-            global_image = self.transform(global_image)
+            global_image = self.context_transform(global_image)
             global_image = nested_tensor_from_tensor_list(global_image.unsqueeze(0))
             encoder_input += [global_image.tensors.squeeze(0), global_image.mask.squeeze(0)]
 
@@ -185,6 +188,8 @@ def build_dataset(config,
                   transform='auto',
                   return_unique=False):
 
+    assert mode in ['training', 'train', 'validation', 'val', 'testa', 'testb']
+
     # get refcoco data
     full_data, ids = get_refcoco_data(config.ref_dir)
 
@@ -199,19 +204,39 @@ def build_dataset(config,
         data = full_data.loc[ids['caption_ids']['testB']]
     else:
         raise NotImplementedError(f"{mode} not supported")
-
-    # select transformation
+    
+    # parse transform parameter
     if transform == 'auto':
-        if mode.lower() in ['training', 'train']: 
-            transform = get_transforms('train', config)
-        else:
-            transform = get_transforms('val', config)
+        # set target and context transformation according to mode
+        transform = auto_transform(mode, config)
+        target_transform, context_transform = transform, transform
+    elif type(transform) == Compose:
+        # assign transform to both target_transform and context_transform
+        target_transform, context_transform = transform, transform
+    elif type(transform) == dict:
+        # for different transformation settings
+        assert set(transform.keys()) == {'context', 'target'}
+        for key in transform.keys():
+            if transform[key] == 'auto':
+                transform[key] = auto_transform(mode, config)
+        target_transform = transform['target']
+        context_transform = transform['context']
+    else:
+        raise ValueError
+    
+    if config.verbose:
+        print(f'Initialize Dataset with mode: {mode}', 
+            '\ntarget transformation:', target_transform, 
+            '\ncontext transformation:', context_transform,
+            f'\nentries: {len(data)}',
+            '\nreturn unique:', return_unique, '\n')
 
     # build dataset
     dataset = RefCocoCaption(data=data.to_dict(orient='records'),
                              root=config.dir,
                              max_length=config.max_position_embeddings,
-                             transform=transform,
+                             target_transform=target_transform,
+                             context_transform=context_transform,
                              return_unique=return_unique,
                              return_global_context=config.use_global_features,
                              return_location_features=config.use_location_features)
