@@ -8,7 +8,7 @@ from PIL import Image
 import json
 import os
 
-MAX_DIM = 299
+MAX_DIM = 224 # 299
 
 
 def read_json(file_name):
@@ -155,7 +155,7 @@ def filename_from_id(image_id, prefix='', file_ending='.jpg'):
     return (filename)
 
 
-def crop_image_to_bb(image, bb):
+def crop_image_to_bb(image, bb, return_context=False):
     """
     crop image to bounding box annotated for the current region
     :input:
@@ -176,9 +176,16 @@ def crop_image_to_bb(image, bb):
     y_min, y_max = y, y + h
 
     # crop image by slicing image array
-    image_cropped = image_array[y_min:y_max, x_min:x_max, :]
+    target_region = image_array[y_min:y_max, x_min:x_max, :]
+    target_image = Image.fromarray(target_region)
 
-    return (Image.fromarray(image_cropped))
+    if return_context:
+        # mask out target from image and return as context
+        image_array[y_min:y_max, x_min:x_max, :] = 0
+        context_image = Image.fromarray(image_array)
+        return target_image, context_image
+
+    return target_image
 
 
 def compute_position_features(image, bb):

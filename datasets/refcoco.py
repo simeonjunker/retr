@@ -12,7 +12,7 @@ from transformers import BertTokenizer
 
 from .utils import nested_tensor_from_tensor_list, crop_image_to_bb, get_refcoco_data, compute_position_features
 
-MAX_DIM = 299
+MAX_DIM = 224 # 299
 
 
 def under_max(image):
@@ -92,7 +92,8 @@ class RefCocoCaption(Dataset):
                  context_transform=None,
                  return_unique=False,
                  return_global_context=False,
-                 return_location_features=False
+                 return_location_features=False,
+                 return_nested_tensor=True
                  ):
         super().__init__()
 
@@ -103,6 +104,7 @@ class RefCocoCaption(Dataset):
                        entry['caption'], entry['bbox']) for entry in data]
         self.return_global_context = return_global_context
         self.return_location_features = return_location_features
+        self.return_nested_tensor = return_nested_tensor
 
         if return_unique:
             # filter for unique ids
@@ -128,7 +130,10 @@ class RefCocoCaption(Dataset):
 
     def __getitem__(self, idx):
         ann_id, image_file, caption, bb = self.annot_select[idx]
-        image = Image.open(os.path.join(self.root, 'train2014', image_file))
+        image_filepath = os.path.join(self.root, 'train2014', image_file)
+        assert os.path.isfile(image_filepath)
+
+        image = Image.open(image_filepath)
 
         # CAPTION
 
@@ -150,30 +155,44 @@ class RefCocoCaption(Dataset):
         if image.mode != 'RGB':
             image = image.convert('RGB')
 
-        # TODO add option for notebook visualization
-
         # with transforms: proceed with building encoder input
-        #   if global=False, location=False: 
+        #   if global=False, location=False:
         #       encoder_input = t_img, t_mask
-        #   if global=True, location=False: 
+        #   if global=True, location=False:
         #       encoder_input = t_img, t_mask, g_img, g_mask
-        #   if global=False, location=True: 
+        #   if global=False, location=True:
         #       encoder_input = t_img, t_mask, loc
-        #   if global=True, location=True: 
+        #   if global=True, location=True:
         #       encoder_input = t_img, t_mask, g_img, g_mask, loc
 
         # target bb
-        target_image = crop_image_to_bb(image, bb)
+        target_image, context_image = crop_image_to_bb(
+            image, bb, return_context=True)
         target_image = self.target_transform(target_image)
-        target_image = nested_tensor_from_tensor_list(target_image.unsqueeze(0))
-        encoder_input = [target_image.tensors.squeeze(0), target_image.mask.squeeze(0)]
+        if self.return_nested_tensor:
+            target_image = nested_tensor_from_tensor_list(
+                target_image.unsqueeze(0))
+            encoder_input = [
+                target_image.tensors.squeeze(0),
+                target_image.mask.squeeze(0)
+                ]
+        else:
+            # for returning non-tensor images / visualization
+            encoder_input = [target_image]
 
         if self.return_global_context:
             # add global context
-            global_image = image
-            global_image = self.context_transform(global_image)
-            global_image = nested_tensor_from_tensor_list(global_image.unsqueeze(0))
-            encoder_input += [global_image.tensors.squeeze(0), global_image.mask.squeeze(0)]
+            context_image = self.context_transform(context_image)
+            if self.return_nested_tensor:
+                context_image = nested_tensor_from_tensor_list(
+                    context_image.unsqueeze(0))
+                encoder_input += [
+                    context_image.tensors.squeeze(0),
+                    context_image.mask.squeeze(0)
+                    ]
+            else:
+                # for returning non-tensor images / visualization
+                encoder_input += [context_image]
 
         if self.return_location_features:
             # add location features
@@ -186,7 +205,8 @@ class RefCocoCaption(Dataset):
 def build_dataset(config,
                   mode='training',
                   transform='auto',
-                  return_unique=False):
+                  return_unique=False, 
+                  return_nested_tensor=True):
 
     assert mode in ['training', 'train', 'validation', 'val', 'testa', 'testb']
 
@@ -239,5 +259,6 @@ def build_dataset(config,
                              context_transform=context_transform,
                              return_unique=return_unique,
                              return_global_context=config.use_global_features,
-                             return_location_features=config.use_location_features)
+                             return_location_features=config.use_location_features, 
+                             return_nested_tensor=return_nested_tensor)
     return dataset
