@@ -1,6 +1,7 @@
+import torch
 from torch.utils.data import Dataset
 import torchvision.transforms.functional as TF
-from torchvision.transforms import Lambda, ColorJitter, RandomHorizontalFlip, ToTensor, Resize, CenterCrop, ToTensor, Normalize, Compose 
+from torchvision.transforms import Lambda, ColorJitter, RandomHorizontalFlip, ToTensor, Resize, CenterCrop, ToTensor, Normalize, Compose
 import torchvision as tv
 
 from PIL import Image
@@ -10,31 +11,7 @@ import os
 
 from transformers import BertTokenizer
 
-from .utils import nested_tensor_from_tensor_list, crop_image_to_bb, get_refcoco_data, compute_position_features
-
-MAX_DIM = 224 # 299
-
-
-def under_max(image):
-
-    shape = np.array(image.size, dtype=np.float)
-    long_dim = max(shape)
-    scale = MAX_DIM / long_dim
-
-    new_shape = (shape * scale).astype(int)
-    image = image.resize(new_shape)
-
-    return image
-
-
-class RandomRotation:
-
-    def __init__(self, angles=[0, 90, 180, 270]):
-        self.angles = angles
-
-    def __call__(self, x):
-        angle = random.choice(self.angles)
-        return TF.rotate(x, angle, expand=True)
+from .utils import nested_tensor_from_tensor_list, crop_image_to_bb, get_refcoco_data, compute_position_features, pad_img_to_max, pad_mask_to_max
 
 
 def get_transforms(mode, config):
@@ -44,27 +21,24 @@ def get_transforms(mode, config):
 
     # build train or val transformations
     # (using model defaults for size and normalization)
+
+    resize = Resize(
+        size=default_transforms.crop_size,
+        interpolation=default_transforms.interpolation
+    )
+
     if mode == 'train': 
         transform = Compose([
-            RandomRotation(),  # NOTE good idea for REG?
-            Lambda(under_max),
             ColorJitter(brightness=[0.5, 1.3],
                         contrast=[0.8, 1.5],
                         saturation=[0.2, 1.5]),
-            RandomHorizontalFlip(),  # NOTE good idea for REG?
-            Resize(size=default_transforms.resize_size, 
-                   interpolation=default_transforms.interpolation),
-            CenterCrop(size=default_transforms.crop_size),
             ToTensor(),
             Normalize(mean=default_transforms.mean, 
                       std=default_transforms.std),
         ])
+        
     elif mode == 'val':
         transform = Compose([
-            Lambda(under_max),
-            Resize(size=default_transforms.resize_size, 
-                   interpolation=default_transforms.interpolation),
-            CenterCrop(size=default_transforms.crop_size),
             ToTensor(),
             Normalize(mean=default_transforms.mean, 
                       std=default_transforms.std),
@@ -72,7 +46,7 @@ def get_transforms(mode, config):
     else:
         raise NotImplementedError(f'transforms mode {mode} is not implemented')
     
-    return transform
+    return {'resize': resize, 'transform': transform}
 
 
 def auto_transform(mode, config):
@@ -93,7 +67,7 @@ class RefCocoCaption(Dataset):
                  return_unique=False,
                  return_global_context=False,
                  return_location_features=False,
-                 return_nested_tensor=True
+                 return_tensor=True
                  ):
         super().__init__()
 
@@ -104,7 +78,7 @@ class RefCocoCaption(Dataset):
                        entry['caption'], entry['bbox']) for entry in data]
         self.return_global_context = return_global_context
         self.return_location_features = return_location_features
-        self.return_nested_tensor = return_nested_tensor
+        self.return_tensor = return_tensor
 
         if return_unique:
             # filter for unique ids
@@ -155,6 +129,10 @@ class RefCocoCaption(Dataset):
         if image.mode != 'RGB':
             image = image.convert('RGB')
 
+        # crop to bounding box
+        target_image, target_mask, context_image, context_mask = crop_image_to_bb(
+            image, bb, return_context=True)
+
         # with transforms: proceed with building encoder input
         #   if global=False, location=False:
         #       encoder_input = t_img, t_mask
@@ -166,30 +144,38 @@ class RefCocoCaption(Dataset):
         #       encoder_input = t_img, t_mask, g_img, g_mask, loc
 
         # target bb
-        target_image, context_image = crop_image_to_bb(
-            image, bb, return_context=True)
-        target_image = self.target_transform(target_image)
-        if self.return_nested_tensor:
-            target_image = nested_tensor_from_tensor_list(
-                target_image.unsqueeze(0))
+        target_image = pad_img_to_max(target_image)
+        target_image = self.target_transform['resize'](target_image)
+        target_image = self.target_transform['transform'](target_image)
+        
+        target_mask = pad_mask_to_max(target_mask)
+        target_mask = self.target_transform['resize'](target_mask.unsqueeze(0))
+
+        if self.return_tensor:
             encoder_input = [
-                target_image.tensors.squeeze(0),
-                target_image.mask.squeeze(0)
+                target_image,
+                target_mask.squeeze(0)
                 ]
+
         else:
             # for returning non-tensor images / visualization
             encoder_input = [target_image]
 
         if self.return_global_context:
             # add global context
-            context_image = self.context_transform(context_image)
-            if self.return_nested_tensor:
-                context_image = nested_tensor_from_tensor_list(
-                    context_image.unsqueeze(0))
+            context_image = pad_img_to_max(context_image)
+            context_image = self.context_transform['resize'](context_image)            
+            context_image = self.context_transform['transform'](context_image)
+            
+            context_mask = pad_mask_to_max(context_mask)
+            context_mask = self.context_transform['resize'](context_mask.unsqueeze(0))
+
+            if self.return_tensor:
                 encoder_input += [
-                    context_image.tensors.squeeze(0),
-                    context_image.mask.squeeze(0)
+                    context_image,
+                    context_mask.squeeze(0)
                     ]
+
             else:
                 # for returning non-tensor images / visualization
                 encoder_input += [context_image]
@@ -206,7 +192,7 @@ def build_dataset(config,
                   mode='training',
                   transform='auto',
                   return_unique=False, 
-                  return_nested_tensor=True):
+                  return_tensor=True):
 
     assert mode in ['training', 'train', 'validation', 'val', 'testa', 'testb']
 
@@ -260,5 +246,5 @@ def build_dataset(config,
                              return_unique=return_unique,
                              return_global_context=config.use_global_features,
                              return_location_features=config.use_location_features, 
-                             return_nested_tensor=return_nested_tensor)
+                             return_tensor=return_tensor)
     return dataset
