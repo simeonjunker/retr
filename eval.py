@@ -12,19 +12,6 @@ from train_utils.checkpoints import get_latest_checkpoint
 from engine import eval_model
 
 
-def setup_val_dataloader(config):
-    dataset_val = refcoco.build_dataset(config, mode="validation", return_unique=True)
-    sampler_val = torch.utils.data.SequentialSampler(dataset_val)
-    data_loader_val = DataLoader(
-        dataset_val,
-        batch_size=config.batch_size,
-        sampler=sampler_val,
-        drop_last=False,
-        num_workers=config.num_workers,
-    )
-    return data_loader_val
-
-
 def prepare_model(args, config):
 
     checkpoint_path = args.checkpoint
@@ -60,7 +47,11 @@ def prepare_model(args, config):
 
 
 def setup_val_dataloader(config):
-    dataset_val = refcoco.build_dataset(config, mode="validation", return_unique=True)
+    dataset_val = refcoco.build_dataset(
+        config, 
+        mode="validation", 
+        return_unique=True, 
+        verbose=True)
     sampler_val = torch.utils.data.SequentialSampler(dataset_val)
     data_loader_val = DataLoader(
         dataset_val,

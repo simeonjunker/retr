@@ -216,9 +216,6 @@ def build_dataset(config,
         # set target and context transformation according to mode
         transform = auto_transform(mode, config)
         target_transform, context_transform = transform, transform
-    elif type(transform) == Compose:
-        # assign transform to both target_transform and context_transform
-        target_transform, context_transform = transform, transform
     elif type(transform) == dict:
         # for different transformation settings
         assert set(transform.keys()) == {'context', 'target'}
@@ -228,7 +225,7 @@ def build_dataset(config,
         target_transform = transform['target']
         context_transform = transform['context']
     else:
-        raise ValueError
+        raise NotImplementedError('input for transform parameter has to be "auto" or dict with transforms for "context" and "target"')
     
     if config.verbose:
         print(f'Initialize Dataset with mode: {mode}', 
