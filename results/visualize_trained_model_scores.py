@@ -59,7 +59,7 @@ def process_loss(epochs, scores):
 
     plt.grid()
     plt.xlabel('Epoch')
-    plt.ylabel('CIDEr')
+    plt.ylabel('Loss')
     plt.xticks(epochs)
     plt.ylim(ymin, ymax)
 
@@ -76,7 +76,7 @@ def main(partial_name):
     partial_name = os.path.abspath(partial_name)
 
     print('Read data from checkpoints...')
-    ckpt_files = sorted(glob(partial_name + '**'))
+    ckpt_files = glob(partial_name + '**')
     ckpt_data = []
     for f in ckpt_files:
         epoch, train_loss, val_loss, cider_score = scores_from_checkpoint(f)
@@ -86,6 +86,8 @@ def main(partial_name):
             'val_loss' : val_loss,
             'cider_score' : cider_score
         })
+
+    ckpt_data = sorted(ckpt_data, key=lambda x:x.get('epoch'))
 
     epochs = [c['epoch'] for c in ckpt_data]
     train_losses = [c['train_loss'] for c in ckpt_data]
@@ -98,14 +100,17 @@ def main(partial_name):
     val_loss_figure = process_loss(epochs, val_losses)
 
     print(f'Save figures to {os.path.split(partial_name)[0]}...')
-    cider_figure.savefig(os.path.join(partial_name + 'cider_scores_per_epoch.jpg'), bbox_inches='tight')
-    train_loss_figure.savefig(os.path.join(partial_name + 'train_loss_scores_per_epoch.jpg'), bbox_inches='tight')
-    val_loss_figure.savefig(os.path.join(partial_name + 'val_loss_scores_per_epoch.jpg'), bbox_inches='tight')
+    out_prefix = partial_name.replace('checkpoint_', '')
+    cider_figure.savefig(os.path.join(out_prefix + 'cider_scores_per_epoch.jpg'), bbox_inches='tight')
+    train_loss_figure.savefig(os.path.join(out_prefix + 'train_loss_scores_per_epoch.jpg'), bbox_inches='tight')
+    val_loss_figure.savefig(os.path.join(out_prefix + 'val_loss_scores_per_epoch.jpg'), bbox_inches='tight')
 
 if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
     parser.add_argument('partial_name')
     args = parser.parse_args()
+
+    assert args.partial_name.endswith('checkpoint_'), 'partial_name has to end with checkpoint'
 
     main(args.partial_name)

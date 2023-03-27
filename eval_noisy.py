@@ -6,8 +6,11 @@ from datasets import refcoco
 from configuration import Config
 import os
 import json
+import numpy as np
+import torchvision
+from torchvision.transforms import Resize, Compose, ToTensor, Lambda, Normalize
 
-from eval_utils.decode import prepare_tokenizer, load_image, greedy
+from eval_utils.decode import prepare_tokenizer
 from engine import eval_model
 
 
@@ -30,11 +33,72 @@ def prepare_model(args, config):
     return model
 
 
-def setup_val_dataloader(config):
+def cover_with_noise(image_tensor, coverage=0.5):
+    # create 1D selection mask
+    _, h, w = image_tensor.shape
+    mask = np.zeros((h, w), dtype=bool).flatten()  # [hw]
+
+    # sample from flattened index & set mask to True
+    idx = np.indices(mask.shape).flatten()
+    idx_sample = np.random.choice(idx, replace=False, size=round(mask.size * coverage))
+    mask[idx_sample] = True
+    # reshape to 2D image shape
+    mask = mask.reshape((h, w))  # [h, w]
+
+    # mask image with noise
+    noise_tensor = torch.rand_like(image_tensor)
+    image_tensor[:, mask] = noise_tensor[:, mask]
+
+    return image_tensor
+
+
+def get_transforms(config, noise_coverage):
+
+    backbone_weights = getattr(torchvision.models, config.backbone + '_Weights').DEFAULT
+    default_transforms = backbone_weights.transforms()
+
+    resize = Resize(
+        size=default_transforms.crop_size,
+        interpolation=default_transforms.interpolation
+    )
+
+    target_transform = Compose([
+            ToTensor(),
+            Lambda(lambda x: cover_with_noise(x, noise_coverage)),
+            Normalize(mean=default_transforms.mean, 
+                      std=default_transforms.std),
+        ])
+
+    context_transform = Compose([
+            ToTensor(),
+            Normalize(mean=default_transforms.mean, 
+                      std=default_transforms.std),
+        ])
+
+    return resize, target_transform, context_transform
+
+
+def setup_val_dataloader(config, noise_coverage):
+    resize, target_transform, context_transform = get_transforms(
+        config, noise_coverage)
+
+    transform = {
+        'target': {
+            'resize': resize,
+            'transform': target_transform,
+        },
+        'context': {
+            'resize': resize,
+            'transform': context_transform,
+        }
+    }
+
     dataset_val = refcoco.build_dataset(
         config, 
         mode="validation", 
+        transform=transform,
         return_unique=True)
+
     sampler_val = torch.utils.data.SequentialSampler(dataset_val)
     data_loader_val = DataLoader(
         dataset_val,
@@ -78,37 +142,6 @@ def override_config_with_checkpoint(checkpoint, config):
         )
 
 
-def main_image(args, config):
-
-    assert args.path is not None
-    image_path = args.path
-
-    # model
-    model = prepare_model(args, config).to(args.device)
-
-    # tokenizer
-    tokenizer, start_token, end_token = prepare_tokenizer()
-    bos_id = tokenizer.convert_tokens_to_ids(tokenizer.cls_token)
-    eos_id = tokenizer.convert_tokens_to_ids(tokenizer.sep_token)
-
-    # image handling
-    image = load_image(image_path, transform=refcoco.val_transform)
-
-    # decoding
-    output_ids = greedy(
-        image,
-        model,
-        max_len=config.max_position_embeddings,
-        device="auto",
-        bos_token=bos_id,
-        eos_token=eos_id,
-    )
-
-    output = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-
-    return output
-
-
 def main_val_set(args, config):
 
     # model
@@ -117,7 +150,7 @@ def main_val_set(args, config):
     # tokenizer
     tokenizer, _, _ = prepare_tokenizer()
 
-    data_loader = setup_val_dataloader(config)
+    data_loader = setup_val_dataloader(config, args.noise_coverage)
 
     metrics, generated = eval_model(
         model, data_loader, tokenizer, config, print_samples=args.print_samples
@@ -140,6 +173,10 @@ if __name__ == "__main__":
     )
     parser.add_argument("--print_samples", action="store_true")
     parser.add_argument("--store_results", action="store_true")
+    parser.add_argument(
+        "--noise_coverage", type=float, default=0.5, 
+        help="proportion of the target image to be covered with random noise"
+    )
     parser.add_argument("--override_config", action="store_true")
     args = parser.parse_args()
 
@@ -158,22 +195,21 @@ if __name__ == "__main__":
             assert args.checkpoint is not None
             model_name = os.path.split(args.checkpoint)[-1]
             outdir = os.path.abspath("./data/results")
+            noise_str = str(args.noise_coverage).replace('.', '-')
             if not os.path.isdir(outdir):
                 print(f"create output directory {outdir}")
                 os.makedirs(outdir)
             # generated expressions
-            outfile_name = model_name.replace(".pth", f"_{args.split}_generated.json")
+            outfile_name = model_name.replace(
+                ".pth", f"_{args.split}_noise{noise_str}_generated.json")
             outfile_path = os.path.join(outdir, outfile_name)
             print(f"write generated expressions to {outfile_path}")
             with open(outfile_path, "w") as f:
                 json.dump(generated, f)
             # evaluation results
-            outfile_name = model_name.replace(".pth", f"_{args.split}_eval.json")
+            outfile_name = model_name.replace(
+                ".pth", f"_{args.split}_noise{noise_str}_eval.json")
             outfile_path = os.path.join(outdir, outfile_name)
             print(f"write evaluation results to {outfile_path}")
             with open(outfile_path, "w") as f:
                 json.dump(metrics, f)
-
-    elif args.mode == "image":
-
-        print(main_image(args, config))
