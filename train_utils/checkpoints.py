@@ -3,7 +3,7 @@ import os
 
 def get_latest_checkpoint(config):
     """get latest checkpoint from defined location"""
-
+    raise NotImplementedError()  # TODO adapt function and remove this
     available_cpts = os.listdir(config.checkpoint_path)
 
     if len(available_cpts) > 0:

@@ -8,14 +8,42 @@ import tqdm
 from collections import defaultdict
 from os.path import dirname, abspath, join
 
-
-from models import utils
+from models.utils import NestedTensor
 from eval_utils.decode import greedy_decoding
 
 file_path = dirname(abspath(__file__))
 module_path = join(file_path, 'nlgeval')
 sys.path.append(module_path)
 from nlgeval import NLGEval
+
+
+def pack_encoder_inputs(encoder_input,
+                        global_features,
+                        location_features,
+                        device='cpu'):
+
+    if global_features and not location_features:
+        # target + global
+        t_img, t_mask, g_img, g_mask = encoder_input
+        # return as tuple w/ len 2
+        return (NestedTensor(t_img, t_mask).to(device),
+                NestedTensor(g_img, g_mask).to(device))
+    elif not global_features and location_features:
+        # target + location
+        t_img, t_mask, l_feats = encoder_input
+        # return as tuple w/ len 2
+        return (NestedTensor(t_img, t_mask).to(device), l_feats.to(device))
+    elif global_features and location_features:
+        # target + global + location
+        t_img, t_mask, g_img, g_mask, l_feats = encoder_input
+        # return as tuple w/ len 3
+        return (NestedTensor(t_img, t_mask).to(device),
+                NestedTensor(g_img, g_mask).to(device), l_feats.to(device))
+    else:
+        # default / target only
+        t_img, t_mask = encoder_input
+        # return as tuple w/ len 1
+        return (NestedTensor(t_img, t_mask).to(device), )
 
 
 def train_one_epoch(model, criterion, data_loader,
@@ -26,13 +54,17 @@ def train_one_epoch(model, criterion, data_loader,
     epoch_loss = 0.0
     total = len(data_loader)
 
+    global_features = data_loader.dataset.return_global_context
+    location_features = data_loader.dataset.return_location_features
+
     with tqdm.tqdm(total=total) as pbar:
-        for ann_ids, images, masks, caps, cap_masks in data_loader:
-            samples = utils.NestedTensor(images, masks).to(device)
+        for ann_ids, *encoder_input, caps, cap_masks in data_loader:
+            samples = pack_encoder_inputs(
+                encoder_input, global_features, location_features, device)
             caps = caps.to(device)
             cap_masks = cap_masks.to(device)
 
-            outputs = model(samples, caps[:, :-1], cap_masks[:, :-1])
+            outputs = model(*samples, caps[:, :-1], cap_masks[:, :-1])
             loss = criterion(outputs.permute(0, 2, 1), caps[:, 1:])
             loss_value = loss.item()
             epoch_loss += loss_value
@@ -59,23 +91,27 @@ def evaluate(model, criterion, data_loader, device):
     validation_loss = 0.0
     total = len(data_loader)
 
+    global_features = data_loader.dataset.return_global_context
+    location_features = data_loader.dataset.return_location_features
+
     with tqdm.tqdm(total=total) as pbar:
-        for ann_ids, images, masks, caps, cap_masks in data_loader:
-            samples = utils.NestedTensor(images, masks).to(device)
+        for ann_ids, *encoder_input, caps, cap_masks in data_loader:
+            samples = pack_encoder_inputs(
+                encoder_input, global_features, location_features, device)
             caps = caps.to(device)
             cap_masks = cap_masks.to(device)
 
-            outputs = model(samples, caps[:, :-1], cap_masks[:, :-1])
+            outputs = model(*samples, caps[:, :-1], cap_masks[:, :-1])
             loss = criterion(outputs.permute(0, 2, 1), caps[:, 1:])
 
             validation_loss += loss.item()
 
             pbar.update(1)
-        
+
     return validation_loss / total
 
 
-def normalize_with_tokenizer(sent, tokenizer): 
+def normalize_with_tokenizer(sent, tokenizer):
     """
     use tokenizer to normalize annotated captions 
     (corresponding to system output)
@@ -83,15 +119,17 @@ def normalize_with_tokenizer(sent, tokenizer):
     return tokenizer.decode(tokenizer.encode(sent), skip_special_tokens=True)
 
 
-def eval_model(model, data_loader, tokenizer, 
+def eval_model(model, data_loader, tokenizer,
                config, metrics_to_omit=[],
-               print_samples=False): 
+               print_samples=False):
     """
     iterate through val_loader and calculate CIDEr scores for model
     (only works with batch_size=1 for now)
     """
-    
-    nlgeval = NLGEval(no_skipthoughts=True, no_glove=True, 
+
+    model.eval()
+
+    nlgeval = NLGEval(no_skipthoughts=True, no_glove=True,
         metrics_to_omit=metrics_to_omit
     )
 
@@ -106,17 +144,22 @@ def eval_model(model, data_loader, tokenizer,
     bos_id = tokenizer.convert_tokens_to_ids(tokenizer.cls_token)
     eos_id = tokenizer.convert_tokens_to_ids(tokenizer.sep_token)
 
+    global_features = data_loader.dataset.return_global_context
+    location_features = data_loader.dataset.return_location_features
+
     # decode imgs in val set
-    for i, (ann_ids, images, masks, caps, cap_masks) in enumerate(tqdm.tqdm(data_loader)):
+    for i, (ann_ids, *encoder_input, caps, cap_masks) in enumerate(tqdm.tqdm(data_loader)):
+
+        samples = pack_encoder_inputs(encoder_input, global_features, location_features)
 
         # get model predictions
         hyps = greedy_decoding(
-            images, model, tokenizer, 
-            max_len=config.max_position_embeddings, clean=True, 
-            pad_token=pad_id, bos_token=bos_id, eos_token=eos_id, 
-            device='auto', fast=False
+            samples, model, tokenizer,
+            max_len=config.max_position_embeddings, clean=True,
+            pad_token=pad_id, bos_token=bos_id, eos_token=eos_id,
+            device='auto'
         )
-        
+
         hypotheses += hyps
 
         ids_hyps = [{'ann_id': i, 'expression': h} for i,h in zip(ann_ids.tolist(), hyps)]
@@ -137,5 +180,5 @@ def eval_model(model, data_loader, tokenizer,
     # calculate cider score from hypotheses and references
     metrics_dict = nlgeval.compute_metrics(
         ref_list=transposed_references, hyp_list=hypotheses)
-    
+
     return metrics_dict, ids_hypotheses

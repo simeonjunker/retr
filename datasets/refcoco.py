@@ -1,5 +1,7 @@
+import torch
 from torch.utils.data import Dataset
 import torchvision.transforms.functional as TF
+from torchvision.transforms import Lambda, ColorJitter, RandomHorizontalFlip, ToTensor, Resize, CenterCrop, ToTensor, Normalize, Compose
 import torchvision as tv
 
 from PIL import Image
@@ -9,49 +11,49 @@ import os
 
 from transformers import BertTokenizer
 
-from .utils import nested_tensor_from_tensor_list, crop_image_to_bb, get_refcoco_data
-
-MAX_DIM = 299
+from .utils import nested_tensor_from_tensor_list, crop_image_to_bb, get_refcoco_data, compute_position_features, pad_img_to_max, pad_mask_to_max
 
 
-def under_max(image):
+def get_transforms(mode, config):
+    # get default transformations for pretrained model
+    model_weights = getattr(tv.models, config.backbone + '_Weights')
+    default_transforms = model_weights.DEFAULT.transforms()
 
-    shape = np.array(image.size, dtype=np.float)
-    long_dim = max(shape)
-    scale = MAX_DIM / long_dim
+    # build train or val transformations
+    # (using model defaults for size and normalization)
 
-    new_shape = (shape * scale).astype(int)
-    image = image.resize(new_shape)
+    resize = Resize(
+        size=default_transforms.crop_size,
+        interpolation=default_transforms.interpolation
+    )
 
-    return image
+    if mode == 'train': 
+        transform = Compose([
+            ColorJitter(brightness=[0.5, 1.3],
+                        contrast=[0.8, 1.5],
+                        saturation=[0.2, 1.5]),
+            ToTensor(),
+            Normalize(mean=default_transforms.mean, 
+                      std=default_transforms.std),
+        ])
+        
+    elif mode == 'val':
+        transform = Compose([
+            ToTensor(),
+            Normalize(mean=default_transforms.mean, 
+                      std=default_transforms.std),
+        ])
+    else:
+        raise NotImplementedError(f'transforms mode {mode} is not implemented')
+    
+    return {'resize': resize, 'transform': transform}
 
 
-class RandomRotation:
-
-    def __init__(self, angles=[0, 90, 180, 270]):
-        self.angles = angles
-
-    def __call__(self, x):
-        angle = random.choice(self.angles)
-        return TF.rotate(x, angle, expand=True)
-
-
-train_transform = tv.transforms.Compose([
-    RandomRotation(),
-    tv.transforms.Lambda(under_max),
-    tv.transforms.ColorJitter(brightness=[0.5, 1.3],
-                              contrast=[0.8, 1.5],
-                              saturation=[0.2, 1.5]),
-    tv.transforms.RandomHorizontalFlip(),
-    tv.transforms.ToTensor(),
-    tv.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-])
-
-val_transform = tv.transforms.Compose([
-    tv.transforms.Lambda(under_max),
-    tv.transforms.ToTensor(),
-    tv.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-])
+def auto_transform(mode, config):
+    if mode.lower() in ['training', 'train']: 
+        return get_transforms('train', config)
+    else:
+        return get_transforms('val', config)
 
 
 class RefCocoCaption(Dataset):
@@ -60,15 +62,23 @@ class RefCocoCaption(Dataset):
                  data,
                  root,
                  max_length,
-                 limit,
-                 transform=train_transform,
-                 return_unique=False):
+                 target_transform=None,
+                 context_transform=None,
+                 return_unique=False,
+                 return_global_context=False,
+                 return_location_features=False,
+                 return_tensor=True
+                 ):
         super().__init__()
 
         self.root = root
-        self.transform = transform
+        self.target_transform = target_transform
+        self.context_transform = context_transform if context_transform is not None else target_transform
         self.annot = [(entry['ann_id'], self._process(entry['image_id']),
                        entry['caption'], entry['bbox']) for entry in data]
+        self.return_global_context = return_global_context
+        self.return_location_features = return_location_features
+        self.return_tensor = return_tensor
 
         if return_unique:
             # filter for unique ids
@@ -94,18 +104,12 @@ class RefCocoCaption(Dataset):
 
     def __getitem__(self, idx):
         ann_id, image_file, caption, bb = self.annot_select[idx]
-        image = Image.open(os.path.join(self.root, 'train2014', image_file))
+        image_filepath = os.path.join(self.root, 'train2014', image_file)
+        assert os.path.isfile(image_filepath)
 
-        # convert if necessary
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
+        image = Image.open(image_filepath)
 
-        # crop image to bounding box
-        image = crop_image_to_bb(image, bb)
-
-        if self.transform:
-            image = self.transform(image)
-        image = nested_tensor_from_tensor_list(image.unsqueeze(0))
+        # CAPTION
 
         caption_encoded = self.tokenizer.encode_plus(
             caption,
@@ -119,17 +123,83 @@ class RefCocoCaption(Dataset):
         cap_mask = (1 -
                     np.array(caption_encoded['attention_mask'])).astype(bool)
 
-        return ann_id, image.tensors.squeeze(0), image.mask.squeeze(
-            0), caption, cap_mask
+        # IMAGE
+
+        # convert if necessary
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+
+        # crop to bounding box
+        target_image, target_mask, context_image, context_mask = crop_image_to_bb(
+            image, bb, return_context=True)
+
+        # with transforms: proceed with building encoder input
+        #   if global=False, location=False:
+        #       encoder_input = t_img, t_mask
+        #   if global=True, location=False:
+        #       encoder_input = t_img, t_mask, g_img, g_mask
+        #   if global=False, location=True:
+        #       encoder_input = t_img, t_mask, loc
+        #   if global=True, location=True:
+        #       encoder_input = t_img, t_mask, g_img, g_mask, loc
+
+        # target bb
+        target_image = pad_img_to_max(target_image)
+        target_image = self.target_transform['resize'](target_image)
+        target_image = self.target_transform['transform'](target_image)
+        
+        target_mask = pad_mask_to_max(target_mask)
+        target_mask = self.target_transform['resize'](target_mask.unsqueeze(0))
+
+        if self.return_tensor:
+            encoder_input = [
+                target_image,
+                target_mask.squeeze(0)
+                ]
+
+        else:
+            # for returning non-tensor images / visualization
+            encoder_input = [target_image]
+
+        if self.return_global_context:
+            # add global context
+            context_image = pad_img_to_max(context_image)
+            context_image = self.context_transform['resize'](context_image)            
+            context_image = self.context_transform['transform'](context_image)
+            
+            context_mask = pad_mask_to_max(context_mask)
+            context_mask = self.context_transform['resize'](context_mask.unsqueeze(0))
+
+            if self.return_tensor:
+                encoder_input += [
+                    context_image,
+                    context_mask.squeeze(0)
+                    ]
+
+            else:
+                # for returning non-tensor images / visualization
+                encoder_input += [context_image]
+
+        if self.return_location_features:
+            # add location features
+            position_feature = compute_position_features(image, bb)
+            encoder_input.append(position_feature)
+
+        return ann_id, *encoder_input, caption, cap_mask
 
 
 def build_dataset(config,
                   mode='training',
                   transform='auto',
-                  return_unique=False):
+                  return_unique=False, 
+                  return_tensor=True):
 
+    assert mode in ['training', 'train', 'validation', 'val', 'testa', 'testb']
+
+    # get refcoco data
     full_data, ids = get_refcoco_data(config.ref_dir)
 
+    # select data partition
     if mode.lower() in ['training', 'train']:
         data = full_data.loc[ids['caption_ids']['train']]
     elif mode.lower() in ['validation', 'val']:
@@ -140,15 +210,38 @@ def build_dataset(config,
         data = full_data.loc[ids['caption_ids']['testB']]
     else:
         raise NotImplementedError(f"{mode} not supported")
-
+    
+    # parse transform parameter
     if transform == 'auto':
-        transform = train_transform if mode.lower() in ['training', 'train'
-                                                        ] else val_transform
+        # set target and context transformation according to mode
+        transform = auto_transform(mode, config)
+        target_transform, context_transform = transform, transform
+    elif type(transform) == dict:
+        # for different transformation settings
+        assert set(transform.keys()) == {'context', 'target'}
+        for key in transform.keys():
+            if transform[key] == 'auto':
+                transform[key] = auto_transform(mode, config)
+        target_transform = transform['target']
+        context_transform = transform['context']
+    else:
+        raise NotImplementedError('input for transform parameter has to be "auto" or dict with transforms for "context" and "target"')
+    
+    if config.verbose:
+        print(f'Initialize Dataset with mode: {mode}', 
+            '\ntarget transformation:', target_transform, 
+            '\ncontext transformation:', context_transform,
+            f'\nentries: {len(data)}',
+            '\nreturn unique:', return_unique, '\n')
 
+    # build dataset
     dataset = RefCocoCaption(data=data.to_dict(orient='records'),
                              root=config.dir,
                              max_length=config.max_position_embeddings,
-                             limit=config.limit,
-                             transform=transform,
-                             return_unique=return_unique)
+                             target_transform=target_transform,
+                             context_transform=context_transform,
+                             return_unique=return_unique,
+                             return_global_context=config.use_global_features,
+                             return_location_features=config.use_location_features, 
+                             return_tensor=return_tensor)
     return dataset

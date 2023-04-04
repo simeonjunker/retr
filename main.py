@@ -67,7 +67,10 @@ def main(config):
 
     if not os.path.exists(config.checkpoint_path):
         os.mkdir(config.checkpoint_path)
-    cpt_template = f'{config.prefix}_checkpoint_#.pth'
+    
+    loc_used = '_loc' if config.use_location_features else ''
+    glob_used = '_glob' if config.use_global_features else ''
+    cpt_template = f'{config.prefix}{loc_used}{glob_used}_checkpoint_#.pth'
 
     if config.resume_training:
         # load latest checkpoint available

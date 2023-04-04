@@ -17,7 +17,7 @@ class Config(object):
         self.weight_decay = 1e-4
 
         # Backbone
-        self.backbone = 'resnet101'
+        self.backbone = 'ResNet101'
         self.position_embedding = 'sine'
         self.dilation = True
         
@@ -31,6 +31,9 @@ class Config(object):
         self.clip_max_norm = 0.1
         self.resume_training = False
         self.early_stopping = True
+        self.use_global_features = False
+        self.use_location_features = False
+        self.verbose = True
 
         # Transformer
         self.hidden_dim = 256

@@ -3,12 +3,14 @@ from typing import Optional, List
 from torch import Tensor
 import pandas as pd
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
+import torch.nn.functional as F
+from math import floor, ceil
 
 import json
 import os
 
-MAX_DIM = 299
+MAX_DIM = 224 # 299
 
 
 def read_json(file_name):
@@ -42,6 +44,7 @@ class NestedTensor(object):
     def __init__(self, tensors, mask: Optional[Tensor]):
         self.tensors = tensors
         self.mask = mask
+        self.shape = self.mask.shape
 
     def to(self, device):
         # type: (Device) -> NestedTensor # noqa
@@ -154,7 +157,7 @@ def filename_from_id(image_id, prefix='', file_ending='.jpg'):
     return (filename)
 
 
-def crop_image_to_bb(image, bb):
+def crop_image_to_bb(image, bb, return_context=False):
     """
     crop image to bounding box annotated for the current region
     :input:
@@ -175,9 +178,20 @@ def crop_image_to_bb(image, bb):
     y_min, y_max = y, y + h
 
     # crop image by slicing image array
-    image_cropped = image_array[y_min:y_max, x_min:x_max, :]
+    target_region = image_array[y_min:y_max, x_min:x_max, :]
+    target_mask = np.zeros_like(target_region[:, :, 0]).astype(bool)
+    target_image = Image.fromarray(target_region)
 
-    return (Image.fromarray(image_cropped))
+    if return_context:
+        # mask out target from image and return as context
+        # positions with True are not allowed to attend while False values will be unchanged
+        context_mask = np.zeros_like(image_array[:, :, 0]).astype(bool)
+        image_array[y_min:y_max, x_min:x_max, :] = 0
+        context_mask[y_min:y_max, x_min:x_max] = True
+        context_image = Image.fromarray(image_array)
+        return target_image, target_mask, context_image, context_mask
+
+    return target_image, target_mask
 
 
 def compute_position_features(image, bb):
@@ -223,3 +237,32 @@ def compute_position_features(image, bb):
     distance = np.sqrt((bcx - cx)**2 + (bcy - cy)**2) / np.sqrt(cx**2 + cy**2)
 
     return torch.Tensor([x1r, y1r, x2r, y2r, area, ratio, distance])
+
+
+def pad_img_to_max(image, color=0, centering=(0.5, 0.5)):
+    max_dim = max(image.size)
+    padded_image = ImageOps.pad(
+        image, 
+        size=(max_dim, max_dim), 
+        centering=centering,
+        color=color
+    )
+    return padded_image
+
+
+def pad_mask_to_max(mask):
+
+    if type(mask) == np.ndarray:
+        mask = torch.from_numpy(mask)
+    
+    x, y = mask.shape
+    if x == y:
+        return mask
+    min_dim, max_dim = sorted(mask.shape)
+    diff = max_dim - min_dim
+    pad = diff / 2
+    if x > y:  # center on y scale
+        return F.pad(mask, (floor(pad),ceil(pad),0,0), 'constant', True)
+    else:  # center on x scale
+        return F.pad(mask, (0,0,floor(pad),ceil(pad)), 'constant', True)
+    return mask
