@@ -20,30 +20,41 @@ from nlgeval import NLGEval
 def pack_encoder_inputs(encoder_input,
                         global_features,
                         location_features,
+                        scene_features,
                         device='cpu'):
 
-    if global_features and not location_features:
+    if not global_features and not location_features and not scene_features:
+        # default / target only
+        t_img, t_mask = encoder_input
+        # return as tuple w/ len 1
+        return (NestedTensor(t_img, t_mask).to(device), )
+    if global_features and not location_features and not scene_features:
         # target + global
         t_img, t_mask, g_img, g_mask = encoder_input
         # return as tuple w/ len 2
         return (NestedTensor(t_img, t_mask).to(device),
                 NestedTensor(g_img, g_mask).to(device))
-    elif not global_features and location_features:
+    elif not global_features and location_features and not scene_features:
         # target + location
         t_img, t_mask, l_feats = encoder_input
         # return as tuple w/ len 2
         return (NestedTensor(t_img, t_mask).to(device), l_feats.to(device))
-    elif global_features and location_features:
+    elif global_features and location_features and not scene_features:
         # target + global + location
         t_img, t_mask, g_img, g_mask, l_feats = encoder_input
         # return as tuple w/ len 3
         return (NestedTensor(t_img, t_mask).to(device),
                 NestedTensor(g_img, g_mask).to(device), l_feats.to(device))
+    elif not global_features and location_features and scene_features:
+        # target + location + scene
+        t_img, t_mask, l_feats, scene_feats = encoder_input
+        # return as tuple w/ len 3
+        return (NestedTensor(t_img, t_mask).to(device),
+                l_feats.to(device),
+                scene_feats.to(device))
     else:
-        # default / target only
-        t_img, t_mask = encoder_input
-        # return as tuple w/ len 1
-        return (NestedTensor(t_img, t_mask).to(device), )
+        raise NotImplementedError()
+        
 
 
 def train_one_epoch(model, criterion, data_loader,
@@ -56,11 +67,12 @@ def train_one_epoch(model, criterion, data_loader,
 
     global_features = data_loader.dataset.return_global_context
     location_features = data_loader.dataset.return_location_features
+    scene_features = data_loader.dataset.return_scene_features
 
     with tqdm.tqdm(total=total) as pbar:
         for ann_ids, *encoder_input, caps, cap_masks in data_loader:
             samples = pack_encoder_inputs(
-                encoder_input, global_features, location_features, device)
+                encoder_input, global_features, location_features, scene_features, device)
             caps = caps.to(device)
             cap_masks = cap_masks.to(device)
 
@@ -93,11 +105,12 @@ def evaluate(model, criterion, data_loader, device):
 
     global_features = data_loader.dataset.return_global_context
     location_features = data_loader.dataset.return_location_features
+    scene_features = data_loader.dataset.return_scene_features
 
     with tqdm.tqdm(total=total) as pbar:
         for ann_ids, *encoder_input, caps, cap_masks in data_loader:
             samples = pack_encoder_inputs(
-                encoder_input, global_features, location_features, device)
+                encoder_input, global_features, location_features, scene_features, device)
             caps = caps.to(device)
             cap_masks = cap_masks.to(device)
 
@@ -150,7 +163,7 @@ def eval_model(model, data_loader, tokenizer,
     # decode imgs in val set
     for i, (ann_ids, *encoder_input, caps, cap_masks) in enumerate(tqdm.tqdm(data_loader)):
 
-        samples = pack_encoder_inputs(encoder_input, global_features, location_features)
+        samples = pack_encoder_inputs(encoder_input, global_features, location_features, scene_features)
 
         # get model predictions
         hyps = greedy_decoding(

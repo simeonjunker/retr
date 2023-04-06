@@ -70,7 +70,8 @@ def main(config):
     
     loc_used = '_loc' if config.use_location_features else ''
     glob_used = '_glob' if config.use_global_features else ''
-    cpt_template = f'{config.prefix}{loc_used}{glob_used}_checkpoint_#.pth'
+    scene_used = '_scene' if config.use_scene_summaries else ''
+    cpt_template = f'{config.prefix}{loc_used}{glob_used}{scene_used}_checkpoint_#.pth'
 
     if config.resume_training:
         # load latest checkpoint available

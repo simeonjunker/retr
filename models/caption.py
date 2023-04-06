@@ -192,7 +192,56 @@ class CaptionGlobalLoc(nn.Module):
         hs = self.transformer(src, mask, pos, target, target_mask)
         out = self.mlp(hs.permute(1, 0, 2))
         return out
+    
+class CaptionSceneLoc(nn.Module):
 
+    def __init__(self, backbone, transformer, positional_encoding, hidden_dim,
+                 vocab_size):
+        super().__init__()
+        self.backbone = backbone
+        self.positional_encoding = positional_encoding
+        self.input_proj = nn.Conv2d(in_channels=backbone.num_channels,
+                                    out_channels=hidden_dim,
+                                    kernel_size=1)
+        self.loc_proj = nn.Linear(7, hidden_dim)
+        self.scene_proj = nn.Linear(134, hidden_dim)
+        self.transformer = transformer
+        self.mlp = MLP(hidden_dim, 512, vocab_size, 3)
+
+    def forward(self, t_samples, loc_feats, scene_feats, target, target_mask):
+
+        # target features
+        if not isinstance(t_samples, NestedTensor):
+            t_samples = nested_tensor_from_tensor_list(t_samples)
+        t_features = self.backbone(t_samples)['0']
+        t_src, t_mask = t_features.decompose()
+        t_src = self.input_proj(t_src)
+        assert t_mask is not None
+        # flatten vectors
+        t_src = t_src.flatten(2)
+        t_mask = t_mask.flatten(1)
+
+        # scene features
+        scene_src = self.scene_proj(scene_feats).unsqueeze(-1)
+        scene_masks = torch.zeros(
+            (scene_feats.shape[0], 1)).bool().to(t_mask.device)
+        
+        # location features
+        loc_src = self.loc_proj(loc_feats).unsqueeze(-1)
+        loc_masks = torch.zeros(
+            (loc_feats.shape[0], 1)).bool().to(t_mask.device)
+
+        # concatenate
+        src = torch.concat([t_src, scene_src, loc_src], 2)
+        mask = torch.concat([t_mask, scene_masks, loc_masks], 1)
+
+        # get positional encoding
+        pos = self.positional_encoding(src)
+
+        hs = self.transformer(src, mask, pos, target, target_mask)
+        out = self.mlp(hs.permute(1, 0, 2))
+        return out
+    
 
 class MLP(nn.Module):
     """ Very simple multi-layer perceptron (also called FFN)"""
@@ -217,25 +266,36 @@ def build_model(config):
 
     use_global = config.use_global_features
     use_location = config.use_location_features
+    use_scene_summaries = config.use_scene_summaries
 
-    print(f'global features: {use_global}, location features: {use_location}')
+    print(f'global features: {use_global}, location features: {use_location}, scene summaries: {use_scene_summaries}')
 
-    if use_global and not use_location:
-        # global features
-        model = CaptionGlobal(backbone, transformer, positional_encoding,
-                              config.hidden_dim, config.vocab_size)
-    elif not use_global and use_location:
-        # loc features
-        model = CaptionLoc(backbone, transformer, positional_encoding,
-                           config.hidden_dim, config.vocab_size)
-    elif use_global and use_location:
-        # both global image and loc features
-        model = CaptionGlobalLoc(backbone, transformer, positional_encoding,
-                                 config.hidden_dim, config.vocab_size)
-    else:
+    # pick model class
+    if not use_global and not use_location and not use_scene_summaries:
         # default / no global image or loc features
-        model = Caption(backbone, transformer, positional_encoding,
-                        config.hidden_dim, config.vocab_size)
+        Model = Caption
+    elif use_global and not use_location and not use_scene_summaries:
+        # global features
+        Model = CaptionGlobal
+    elif not use_global and use_location and not use_scene_summaries:
+        # loc features
+        Model = CaptionLoc
+    elif use_global and use_location and not use_scene_summaries:
+        # global features + loc features
+        Model = CaptionGlobalLoc
+    elif not use_global and use_location and use_scene_summaries:
+        # loc features + scene features
+        Model = CaptionSceneLoc
+    else:
+        raise NotImplementedError()
+    
+    # init model
+    model = Model(backbone, 
+                  transformer, 
+                  positional_encoding, 
+                  config.hidden_dim, 
+                  config.vocab_size)
+        
 
     criterion = torch.nn.CrossEntropyLoss()
 
