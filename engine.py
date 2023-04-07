@@ -159,6 +159,7 @@ def eval_model(model, data_loader, tokenizer,
 
     global_features = data_loader.dataset.return_global_context
     location_features = data_loader.dataset.return_location_features
+    scene_features = data_loader.dataset.return_scene_features
 
     # decode imgs in val set
     for i, (ann_ids, *encoder_input, caps, cap_masks) in enumerate(tqdm.tqdm(data_loader)):
