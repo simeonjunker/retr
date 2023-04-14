@@ -49,70 +49,66 @@ def setup_val_dataloader(config):
 def override_config_with_checkpoint(checkpoint, config):
     use_glob = config.use_global_features
     use_loc = config.use_location_features
+    use_scene = config.use_scene_summaries
     
     if 'loc_checkpoint' in checkpoint:
-        if not (not use_glob and use_loc):
+        if not (not use_glob and use_loc and not use_scene):
             # override settings
             config.use_global_features = False
             config.use_location_features = True
+            config.use_scene_summaries = False
             # send warning
             print(f'''CAUTION: Overriding configuration!
-                WAS: use_global_features=={use_glob}; use_location_features=={use_loc}
-                NEW: use_global_features=={config.use_global_features}; use_location_features=={config.use_location_features}
+                WAS: use_global_features=={use_glob};\
+                    use_location_features=={use_loc};\
+                    use_scene_summaries=={use_scene}
+                NEW: use_global_features=={config.use_global_features};\
+                    use_location_features=={config.use_location_features};\
+                    use_scene_summaries=={config.use_scene_summaries}
                 ''')
             
     elif 'loc_glob_checkpoint' in checkpoint:
-        if not (use_glob and use_loc):
+        if not (use_glob and use_loc and not use_scene):
             # override settings
             config.use_global_features = True
             config.use_location_features = True
+            config.use_scene_summaries = False
             # send warning
             print(f'''CAUTION: Overriding configuration!
-                WAS: use_global_features=={use_glob}; use_location_features=={use_loc}
-                NEW: use_global_features=={config.use_global_features}; use_location_features=={config.use_location_features}
+                WAS: use_global_features=={use_glob};\
+                    use_location_features=={use_loc};\
+                    use_scene_summaries=={use_scene}
+                NEW: use_global_features=={config.use_global_features};\
+                    use_location_features=={config.use_location_features};\
+                    use_scene_summaries=={config.use_scene_summaries}
                 ''')
-            
+
+    elif 'loc_scene_checkpoint' in checkpoint:
+        if not (not use_glob and use_loc and use_scene):
+            # override settings
+            config.use_global_features = False
+            config.use_location_features = True
+            config.use_scene_summaries = True
+            # send warning
+            print(f'''CAUTION: Overriding configuration!
+                WAS: use_global_features=={use_glob};\
+                    use_location_features=={use_loc};\
+                    use_scene_summaries=={use_scene}
+                NEW: use_global_features=={config.use_global_features};\
+                    use_location_features=={config.use_location_features};\
+                    use_scene_summaries=={config.use_scene_summaries}
+                ''')            
     else:
         raise NotImplementedError(
             "Overriding model checkpoints is not supported for the model type given by the checkpoint"
         )
 
 
-def main_image(args, config):
-
-    assert args.path is not None
-    image_path = args.path
-
-    # model
-    model = prepare_model(args, config).to(args.device)
-
-    # tokenizer
-    tokenizer, start_token, end_token = prepare_tokenizer()
-    bos_id = tokenizer.convert_tokens_to_ids(tokenizer.cls_token)
-    eos_id = tokenizer.convert_tokens_to_ids(tokenizer.sep_token)
-
-    # image handling
-    image = load_image(image_path, transform=refcoco.val_transform)
-
-    # decoding
-    output_ids = greedy(
-        image,
-        model,
-        max_len=config.max_position_embeddings,
-        device="auto",
-        bos_token=bos_id,
-        eos_token=eos_id,
-    )
-
-    output = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-
-    return output
-
-
 def main_val_set(args, config):
 
     # model
     model = prepare_model(args, config).to(args.device)
+    print(f'Successfully loaded {model.__class__.__name__} model')
 
     # tokenizer
     tokenizer, _, _ = prepare_tokenizer()
