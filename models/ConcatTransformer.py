@@ -5,6 +5,7 @@ from typing import Optional, List
 import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
+from .position_encoding import build_position_encoding
 
 
 class Transformer(nn.Module):
@@ -20,6 +21,7 @@ class Transformer(nn.Module):
         encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
         self.encoder = TransformerEncoder(
             encoder_layer, num_encoder_layers, encoder_norm)
+        self.positional_encoding = build_position_encoding(config)
 
         self.embeddings = DecoderEmbeddings(config)
         decoder_layer = TransformerDecoderLayer(d_model, nhead, dim_feedforward,
@@ -38,9 +40,21 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, pos_embed, tgt, tgt_mask):
+    def forward(self, src_t, mask_t, src_c, mask_c, tgt, tgt_mask):
+
+        # merge information
+        if src_c is not None:
+            # concatenate
+            src = torch.concat([src_t, src_c], 2)
+            mask = torch.concat([mask_t, mask_c], 1)
+        else:
+            src, mask = src_t, mask_t
+
+        pos_embed = self.positional_encoding(src)
+
         # permute NxCxHW to HWxNxC
         bs, c, hw = src.shape
+
         src = src.permute(2, 0, 1)
         pos_embed = pos_embed.permute(2, 0, 1)
 

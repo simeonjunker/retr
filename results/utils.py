@@ -7,7 +7,7 @@ from os.path import join
 
 
 def parse_filename(filename):
-    condition, epoch, split, _, noise_level = re.findall(r'refcoco_(loc|loc_glob)_checkpoint_(\d+)_(val|testa|testb)_(noise(\d-\d+))?', filename)[0]
+    condition, epoch, split, _, noise_level = re.findall(r'refcoco_(loc|loc_glob|loc_scene)_checkpoint_(\d+)_(val|testa|testb)_(noise(\d-\d+))?', filename)[0]
     noise_level = 0 if noise_level == '' else float(noise_level.replace('-', '.'))
     return condition, epoch, split, noise_level
 
