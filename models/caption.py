@@ -4,7 +4,9 @@ import torch.nn.functional as F
 
 from .utils import NestedTensor, nested_tensor_from_tensor_list
 from .backbone import build_backbone
-from .ConcatTransformer import build_transformer
+from .ConcatTransformer import build_transformer as build_concat_transformer
+from .EncoderCrossAttTransformer import build_transformer as build_encrossatt_transformer
+from .DecoderCrossAttTransformer import build_transformer as build_decrossatt_transformer
 
 
 class Caption(nn.Module):
@@ -208,8 +210,19 @@ class MLP(nn.Module):
 
 
 def build_model(config):
+    
     backbone = build_backbone(config)
-    transformer = build_transformer(config)
+    
+    if config.transformer_type.lower() == 'concat':
+        tf_build_fn = build_concat_transformer
+    elif config.transformer_type.lower() == 'encodercrossatt':
+        tf_build_fn = build_encrossatt_transformer
+    elif config.transformer_type.lower() == 'decodercrossatt':
+        tf_build_fn = build_decrossatt_transformer
+    else:
+        raise NotImplementedError()
+
+    transformer = tf_build_fn(config)
 
     use_global = config.use_global_features
     use_location = config.use_location_features
@@ -239,7 +252,8 @@ def build_model(config):
                   None, 
                   config.hidden_dim, 
                   config.vocab_size)
-        
+    
+    print(f'Built {model.__class__.__name__} model with {transformer.__class__.__name__}')
 
     criterion = torch.nn.CrossEntropyLoss()
 

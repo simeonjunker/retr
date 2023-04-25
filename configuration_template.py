@@ -38,6 +38,7 @@ class Config(object):
         self.verbose = True
 
         # Transformer
+        self.transformer_type = 'Concat'  # 'Concat', 'EncoderCrossAtt', 'DecoderCrossAtt'
         self.hidden_dim = 256
         self.pad_token_id = 0
         self.max_position_embeddings = 128

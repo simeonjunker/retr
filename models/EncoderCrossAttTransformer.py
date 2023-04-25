@@ -8,7 +8,16 @@ from torch import nn, Tensor
 from .position_encoding import build_position_encoding
 
 
-class ConcatTransformer(nn.Module):
+class EncoderCrossAttTransformer(nn.Module):
+
+    # ENCODER
+    # [Target] -> SelfAtt#1 -> [SAtt_T]             | Encode Target
+    # [Context] -> SelfAtt#2 -> [SAtt_C]            | Encode Context
+    # [SAtt_T] / [SAtt_C] -> CrossAtt#1 -> [Src]    | Merge Target / Context
+
+    # DECODER
+    # [Cap] -> SelfAtt#3 -> [SAtt_Cap]              | Encode Cap
+    # [SAtt_Cap] / [Src] -> CrossAtt#2 -> [Out]     | Merge TargetContext / Cap
 
     def __init__(self, config, d_model=512, nhead=8, num_encoder_layers=6,
                  num_decoder_layers=6, dim_feedforward=2048, dropout=0.1,
@@ -40,37 +49,48 @@ class ConcatTransformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src_t, mask_t, src_c, mask_c, tgt, tgt_mask):
+    def forward(self, src_t, mask_t, src_c, mask_c, tgt, tgt_mask):     
 
-        # merge information
-        if src_c is not None:
-            # concatenate
-            src = torch.concat([src_t, src_c], 2)
-            mask = torch.concat([mask_t, mask_c], 1)
-        else:
-            src, mask = src_t, mask_t
+        bs, c, hw = src_t.shape
 
-        pos_embed = self.positional_encoding(src)
+        # pos embed + permute NxCxHW to HWxNxC for target
+        pos_t = self.positional_encoding(src_t)
+        src_t = src_t.permute(2, 0, 1)
+        pos_t = pos_t.permute(2, 0, 1)
 
-        # permute NxCxHW to HWxNxC
-        bs, c, hw = src.shape
+        # pos embed + permute NxCxHW to HWxNxC for context
+        pos_c = self.positional_encoding(src_c)
+        src_c = src_c.permute(2, 0, 1)
+        pos_c = pos_c.permute(2, 0, 1)
 
-        src = src.permute(2, 0, 1)
-        pos_embed = pos_embed.permute(2, 0, 1)
-
+        # embed + permute target expression
         tgt = self.embeddings(tgt).permute(1, 0, 2)
         query_embed = self.embeddings.position_embeddings.weight.unsqueeze(1)
         query_embed = query_embed.repeat(1, bs, 1)
 
-        memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
-        hs = self.decoder(tgt, memory, memory_key_padding_mask=mask, tgt_key_padding_mask=tgt_mask,
-                          pos=pos_embed, query_pos=query_embed,
-                          tgt_mask=generate_square_subsequent_mask(len(tgt)).to(tgt.device))
+        # Encoder (with target / context merge)
+        memory = self.encoder(
+            src_t, src_c,
+            src_t_key_padding_mask=mask_t, src_c_key_padding_mask=mask_c,
+            pos_t=pos_t, pos_c=pos_c
+        )
+        # Decoder
+        hs = self.decoder(
+            tgt, memory, 
+            memory_key_padding_mask=mask_t, tgt_key_padding_mask=tgt_mask,
+            pos=pos_t, query_pos=query_embed,
+            tgt_mask=generate_square_subsequent_mask(len(tgt)).to(tgt.device)
+        )
 
         return hs
 
 
 class TransformerEncoder(nn.Module):
+
+    # ENCODER
+    # [Target] -> SelfAtt#1 -> [SAtt_T]             | Encode Target
+    # [Context] -> SelfAtt#2 -> [SAtt_C]            | Encode Context
+    # [SAtt_T] / [SAtt_C] -> CrossAtt#1 -> [Src]    | Merge Target / Context
 
     def __init__(self, encoder_layer, num_layers, norm=None):
         super().__init__()
@@ -78,15 +98,22 @@ class TransformerEncoder(nn.Module):
         self.num_layers = num_layers
         self.norm = norm
 
-    def forward(self, src,
-                mask: Optional[Tensor] = None,
-                src_key_padding_mask: Optional[Tensor] = None,
-                pos: Optional[Tensor] = None):
-        output = src
+    def forward(self, 
+                src_t, src_c,
+                src_t_mask: Optional[Tensor] = None, src_c_mask: Optional[Tensor] = None,
+                src_t_key_padding_mask: Optional[Tensor] = None, src_c_key_padding_mask: Optional[Tensor] = None,
+                pos_t: Optional[Tensor] = None, pos_c: Optional[Tensor] = None
+                ):
+        
+        output = src_t
 
         for layer in self.layers:
-            output = layer(output, src_mask=mask,
-                           src_key_padding_mask=src_key_padding_mask, pos=pos)
+            output = layer(
+                output, src_c,
+                src_t_mask=src_t_mask, src_c_mask=src_c_mask, 
+                src_t_key_padding_mask=src_t_key_padding_mask, src_c_key_padding_mask=src_c_key_padding_mask, 
+                pos_t=pos_t, pos_c=pos_c
+            )
 
         if self.norm is not None:
             output = self.norm(output)
@@ -95,6 +122,10 @@ class TransformerEncoder(nn.Module):
 
 
 class TransformerDecoder(nn.Module):
+
+    # DECODER
+    # [Cap] -> SelfAtt#3 -> [SAtt_Cap]              | Encode Cap
+    # [SAtt_Cap] / [Src (Memory)] -> CrossAtt#2 -> [Out]     | Merge TargetContext / Cap
 
     def __init__(self, decoder_layer, num_layers, norm=None, return_intermediate=False):
         super().__init__()
@@ -136,20 +167,39 @@ class TransformerDecoder(nn.Module):
 
 
 class TransformerEncoderLayer(nn.Module):
+    # ENCODER
+    # [Target / Src] -> SelfAtt#1 -> [SAtt_T]       | Encode Target
+    # [Context] -> SelfAtt#2 -> [SAtt_C]            | Encode Context
+    # [SAtt_T] / [SAtt_C] -> CrossAtt#1 -> [Src]    | Merge Target / Context
 
     def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1,
                  activation="relu", normalize_before=False):
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+
+        # Target Self-Att
+        self.t_self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        self.t_dropout = nn.Dropout(dropout)
+        self.t_norm_1 = nn.LayerNorm(d_model)
+        self.t_norm_2 = nn.LayerNorm(d_model)
+
+        # Context Self-Att
+        self.c_self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        self.c_dropout = nn.Dropout(dropout)
+        self.c_norm_1 = nn.LayerNorm(d_model)
+        self.c_norm_2 = nn.LayerNorm(d_model)
+
+        # Target/Context Cross-Att
+        self.tc_cross_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        self.tc_dropout = nn.Dropout(dropout)
+        # self.tc_norm_1 = nn.LayerNorm(d_model)
+        self.tc_norm_2 = nn.LayerNorm(d_model)
+
         # Implementation of Feedforward model
         self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.dropout = nn.Dropout(dropout)
-        self.linear2 = nn.Linear(dim_feedforward, d_model)
-
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
         self.dropout1 = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
         self.dropout2 = nn.Dropout(dropout)
+
 
         self.activation = _get_activation_fn(activation)
         self.normalize_before = normalize_before
@@ -157,42 +207,44 @@ class TransformerEncoderLayer(nn.Module):
     def with_pos_embed(self, tensor, pos: Optional[Tensor]):
         return tensor if pos is None else tensor + pos
 
-    def forward_post(self,
-                     src,
-                     src_mask: Optional[Tensor] = None,
-                     src_key_padding_mask: Optional[Tensor] = None,
-                     pos: Optional[Tensor] = None):
-        q = k = self.with_pos_embed(src, pos)
-        src2 = self.self_attn(q, k, value=src, attn_mask=src_mask,
-                              key_padding_mask=src_key_padding_mask)[0]
-        src = src + self.dropout1(src2)
-        src = self.norm1(src)
-        src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
-        src = src + self.dropout2(src2)
-        src = self.norm2(src)
-        return src
+    def forward(self, src_t, src_c,
+                    src_t_mask: Optional[Tensor] = None,
+                    src_c_mask: Optional[Tensor] = None,
+                    src_c_key_padding_mask: Optional[Tensor] = None,
+                    src_t_key_padding_mask: Optional[Tensor] = None,
+                    pos_c: Optional[Tensor] = None,
+                    pos_t: Optional[Tensor] = None):
+    
+        assert self.normalize_before
 
-    def forward_pre(self, src,
-                    src_mask: Optional[Tensor] = None,
-                    src_key_padding_mask: Optional[Tensor] = None,
-                    pos: Optional[Tensor] = None):
-        src2 = self.norm1(src)
-        q = k = self.with_pos_embed(src2, pos)
-        src2 = self.self_attn(q, k, value=src2, attn_mask=src_mask,
-                              key_padding_mask=src_key_padding_mask)[0]
-        src = src + self.dropout1(src2)
-        src2 = self.norm2(src)
-        src2 = self.linear2(self.dropout(self.activation(self.linear1(src2))))
-        src = src + self.dropout2(src2)
-        return src
+        # encode target via self-attention
+        src_t2 = self.t_norm_1(src_t)
+        q = k = self.with_pos_embed(src_t2, pos_t)
+        src_t2 = self.t_self_attn(q, k, value=src_t2, attn_mask=src_t_mask,
+                              key_padding_mask=src_t_key_padding_mask)[0]
+        src_t = src_t + self.t_dropout(src_t2)
+        src_t2 = self.t_norm_2(src_t)
 
-    def forward(self, src,
-                src_mask: Optional[Tensor] = None,
-                src_key_padding_mask: Optional[Tensor] = None,
-                pos: Optional[Tensor] = None):
-        if self.normalize_before:
-            return self.forward_pre(src, src_mask, src_key_padding_mask, pos)
-        return self.forward_post(src, src_mask, src_key_padding_mask, pos)
+        # encode context via self-attention
+        src_c2 = self.t_norm_1(src_c)
+        q = k = self.with_pos_embed(src_c2, pos_c)
+        src_c2 = self.t_self_attn(q, k, value=src_c2, attn_mask=src_c_mask,
+                              key_padding_mask=src_c_key_padding_mask)[0]
+        src_c = src_c + self.t_dropout(src_c2)
+        src_c2 = self.t_norm_2(src_c)
+
+        # merge via cross-attention
+        src_t2 = self.tc_cross_attn(query=self.with_pos_embed(src_t2, pos_t),
+                                   key=self.with_pos_embed(src_c2, pos_c),
+                                   value=src_c2, attn_mask=None,  # NOTE set mask?
+                                   key_padding_mask=None)[0]  # NOTE set mask?
+        src_t = src_t + self.tc_dropout(src_t2)
+        src_t = self.tc_norm_2(src_t)
+
+        # linear layer
+        src_t2 = self.linear2(self.dropout1(self.activation(self.linear1(src_t2))))
+        src_t = src_t + self.dropout2(src_t2)
+        return src_t
 
 
 class TransformerDecoderLayer(nn.Module):
@@ -339,7 +391,7 @@ def generate_square_subsequent_mask(sz):
 
 
 def build_transformer(config):
-    return ConcatTransformer(
+    return EncoderCrossAttTransformer(
         config,
         d_model=config.hidden_dim,
         dropout=config.dropout,
