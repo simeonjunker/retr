@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from .utils import NestedTensor, nested_tensor_from_tensor_list
+from .utils import NestedTensor, nested_tensor_from_tensor_list, ensure_unmasked_values
 from .backbone import build_backbone
 from .ConcatTransformer import build_transformer as build_concat_transformer
 from .EncoderCrossAttTransformer import build_transformer as build_encrossatt_transformer
@@ -132,6 +132,8 @@ class CaptionGlobalLoc(nn.Module):
         g_src, g_mask = g_features.decompose()
         g_src = self.input_proj(g_src)
         assert g_mask is not None
+        # ensure there are unmasked values in the context
+        g_mask = ensure_unmasked_values(g_mask)
         # flatten vectors
         g_src = g_src.flatten(2)
         g_mask = g_mask.flatten(1)
