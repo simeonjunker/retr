@@ -186,7 +186,7 @@ class CaptionSceneLoc(nn.Module):
         # scene features
         b, n_feats = s_features.size()
         
-        s_idx = torch.arange(0, self.scene_dim).repeat((b, 1))  # long tensor with scene feature idx -> [b, n_feats]
+        s_idx = torch.arange(0, self.scene_dim).repeat((b, 1)).to(t_mask.device)  # long tensor with scene feature idx -> [b, n_feats]
         s_emb_out = self.scene_emb(s_idx)  # embeddings for scene feature idx -> [b, n_feats, hidden_dim]
 
         weights = s_features.unsqueeze(-1)  # use input features as weights -> [b, n_feats, 1]
