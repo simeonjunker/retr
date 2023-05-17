@@ -241,9 +241,11 @@ class TransformerEncoderLayer(nn.Module):
 
         # encode target via self-attention
         src_t2 = self.t_norm_1(src_t)
-        q = k = self.with_pos_embed(src_t2, pos_t)
-        src_t2 = self.t_self_attn(q, k, value=src_t2, attn_mask=src_t_mask,
-                              key_padding_mask=src_t_key_padding_mask)[0]
+        q = k = v = self.with_pos_embed(src_t2, pos_t)
+        src_t2 = self.t_self_attn(query=q, key=k, value=v, 
+                            attn_mask=src_t_mask,
+                            key_padding_mask=src_t_key_padding_mask
+                            )[0]
         src_t = src_t + self.t_dropout(src_t2)
         src_t2 = self.t_norm_2(src_t)
 
@@ -253,9 +255,11 @@ class TransformerEncoderLayer(nn.Module):
 
         # encode context via self-attention
         src_c2 = self.c_norm_1(src_c)
-        q = k = self.with_pos_embed(src_c2, pos_c)
-        src_c2 = self.c_self_attn(q, k, value=src_c2, attn_mask=src_c_mask,
-                              key_padding_mask=src_c_key_padding_mask)[0]
+        q = k = v = self.with_pos_embed(src_c2, pos_c)
+        src_c2 = self.c_self_attn(query=q, key=k, value=v, 
+                            attn_mask=src_c_mask,
+                            key_padding_mask=src_c_key_padding_mask
+                            )[0]
         src_c = src_c + self.c_dropout(src_c2)
         src_c2 = self.c_norm_2(src_c)
 
@@ -325,25 +329,32 @@ class TransformerDecoderLayer(nn.Module):
 
         # self-attention
         tgt2 = self.norm1(tgt)
-        q = k = self.with_pos_embed(tgt2, query_pos)
-        tgt2 = self.self_attn(q, k, value=tgt2, attn_mask=tgt_mask,
-                              key_padding_mask=tgt_key_padding_mask)[0]
+        q = k = v = self.with_pos_embed(tgt2, query_pos)
+        tgt2 = self.self_attn(query=q, key=k, value=v, 
+                              attn_mask=tgt_mask,
+                              key_padding_mask=tgt_key_padding_mask
+                              )[0]
         tgt = tgt + self.dropout1(tgt2)
 
         # target/expression cross-attention
         tgt2 = self.t_norm(tgt)
-        tgt2 = self.t_multihead_attn(query=self.with_pos_embed(tgt2, query_pos),
-                                   key=self.with_pos_embed(t_memory, t_pos),
-                                   value=t_memory, attn_mask=t_memory_mask,
-                                   key_padding_mask=t_memory_key_padding_mask)[0]
+        q = tgt2
+        k = v = t_memory
+        tgt2 = self.t_multihead_attn(query=q, key=v, value=v, 
+                                     attn_mask=t_memory_mask,
+                                     key_padding_mask=t_memory_key_padding_mask
+                                     )[0]
         tgt = tgt + self.t_dropout(tgt2)
 
         # context/expression cross-attention
+        # TODO return attention here
         tgt2 = self.c_norm(tgt)
-        tgt2 = self.c_multihead_attn(query=self.with_pos_embed(tgt2, query_pos),
-                                   key=self.with_pos_embed(c_memory, c_pos),
-                                   value=c_memory, attn_mask=c_memory_mask,
-                                   key_padding_mask=c_memory_key_padding_mask)[0]
+        q = tgt2
+        k = v = c_memory
+        tgt2, att_weights = self.c_multihead_attn(query=q, key=k, value=v, 
+                                     attn_mask=c_memory_mask,
+                                     key_padding_mask=c_memory_key_padding_mask
+                                     )
         tgt = tgt + self.c_dropout(tgt2)
 
         # linear

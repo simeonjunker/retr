@@ -219,24 +219,30 @@ class TransformerEncoderLayer(nn.Module):
 
         # encode target via self-attention
         src_t2 = self.t_norm_1(src_t)
-        q = k = self.with_pos_embed(src_t2, pos_t)
-        src_t2 = self.t_self_attn(q, k, value=src_t2, attn_mask=src_t_mask,
-                              key_padding_mask=src_t_key_padding_mask)[0]
+        q = k = v = self.with_pos_embed(src_t2, pos_t)
+        src_t2 = self.t_self_attn(query=q, key=k, value=v, 
+                                  attn_mask=src_t_mask,
+                                  key_padding_mask=src_t_key_padding_mask
+                                  )[0]
         src_t = src_t + self.t_dropout(src_t2)
         src_t2 = self.t_norm_2(src_t)
 
         # encode context via self-attention
         src_c2 = self.t_norm_1(src_c)
-        q = k = self.with_pos_embed(src_c2, pos_c)
-        src_c2 = self.t_self_attn(q, k, value=src_c2, attn_mask=src_c_mask,
-                              key_padding_mask=src_c_key_padding_mask)[0]
+        q = k = v = self.with_pos_embed(src_c2, pos_c)
+        src_c2 = self.t_self_attn(query=q, key=k, value=v, 
+                                  attn_mask=src_c_mask,
+                                  key_padding_mask=src_c_key_padding_mask
+                                  )[0]
         src_c = src_c + self.t_dropout(src_c2)
         src_c2 = self.t_norm_2(src_c)
 
         # merge via cross-attention
-        src_t2 = self.tc_cross_attn(query=self.with_pos_embed(src_t2, pos_t),
-                                   key=self.with_pos_embed(src_c2, pos_c),
-                                   value=src_c2, attn_mask=None,  # NOTE set mask?
+        # TODO return attention here
+        q = src_t2
+        k = v = src_c2
+        src_t2 = self.tc_cross_attn(query=q, key=k, value=v, 
+                                   attn_mask=None,  # NOTE set mask?
                                    key_padding_mask=None)[0]  # NOTE set mask?
         src_t = src_t + self.tc_dropout(src_t2)
         src_t = self.tc_norm_2(src_t)
@@ -280,17 +286,24 @@ class TransformerDecoderLayer(nn.Module):
                      memory_key_padding_mask: Optional[Tensor] = None,
                      pos: Optional[Tensor] = None,
                      query_pos: Optional[Tensor] = None):
-        q = k = self.with_pos_embed(tgt, query_pos)
-        tgt2 = self.self_attn(q, k, value=tgt, attn_mask=tgt_mask,
-                              key_padding_mask=tgt_key_padding_mask)[0]
+        
+        q = k = v = self.with_pos_embed(tgt, query_pos)
+        tgt2 = self.self_attn(q, k, value=v, 
+                              attn_mask=tgt_mask,
+                              key_padding_mask=tgt_key_padding_mask
+                              )[0]
         tgt = tgt + self.dropout1(tgt2)
         tgt = self.norm1(tgt)
-        tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt, query_pos),
-                                   key=self.with_pos_embed(memory, pos),
-                                   value=memory, attn_mask=memory_mask,
-                                   key_padding_mask=memory_key_padding_mask)[0]
+
+        q = tgt
+        k = v = memory
+        tgt2 = self.multihead_attn(query=q, key=k, value=v, 
+                                   attn_mask=memory_mask,
+                                   key_padding_mask=memory_key_padding_mask
+                                   )[0]
         tgt = tgt + self.dropout2(tgt2)
         tgt = self.norm2(tgt)
+
         tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
         tgt = tgt + self.dropout3(tgt2)
         tgt = self.norm3(tgt)
@@ -304,15 +317,20 @@ class TransformerDecoderLayer(nn.Module):
                     pos: Optional[Tensor] = None,
                     query_pos: Optional[Tensor] = None):
         tgt2 = self.norm1(tgt)
-        q = k = self.with_pos_embed(tgt2, query_pos)
-        tgt2 = self.self_attn(q, k, value=tgt2, attn_mask=tgt_mask,
-                              key_padding_mask=tgt_key_padding_mask)[0]
+        q = k = v = self.with_pos_embed(tgt2, query_pos)
+        tgt2 = self.self_attn(query=q, key=k, value=v, 
+                              attn_mask=tgt_mask,
+                              key_padding_mask=tgt_key_padding_mask
+                              )[0]
         tgt = tgt + self.dropout1(tgt2)
         tgt2 = self.norm2(tgt)
-        tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt2, query_pos),
-                                   key=self.with_pos_embed(memory, pos),
-                                   value=memory, attn_mask=memory_mask,
-                                   key_padding_mask=memory_key_padding_mask)[0]
+
+        q = tgt2
+        k = v = memory
+        tgt2 = self.multihead_attn(query=q, key=k, value=v, 
+                                   attn_mask=memory_mask,
+                                   key_padding_mask=memory_key_padding_mask
+                                   )[0]
         tgt = tgt + self.dropout2(tgt2)
         tgt2 = self.norm3(tgt)
         tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt2))))
