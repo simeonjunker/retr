@@ -1,11 +1,10 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+import copy
 from typing import List, Optional
 
 import torch
 import torch.distributed as dist
-from torch import Tensor
+from torch import Tensor, nn
 import numpy as np
-
 
 def _max_by_axis(the_list):
     # type: (List[List[int]]) -> List[int]
@@ -14,6 +13,48 @@ def _max_by_axis(the_list):
         for index, item in enumerate(sublist):
             maxes[index] = max(maxes[index], item)
     return maxes
+
+
+def make_3d_att_mask(target_mask, source_mask, num_heads):
+
+    # get dimensions per mask
+    d_t = target_mask.shape[-1]
+    d_s = source_mask.shape[-1]
+    
+    # repeat to get 2D masks
+    exp_q = target_mask.unsqueeze(1).repeat(1,d_s,1)  # [b, d_t] -> [b, d_t, d_s]
+    exp_k = source_mask.unsqueeze(1).repeat(1,d_t,1)  # [b, d_s] -> [b, d_s, d_t]
+    
+    # transpose q
+    exp_q = torch.transpose(exp_q, 2, 1)  # [b, d_t, d_s] -> [b, d_s, d_t]
+    
+    # merge masks
+    attn_mask_2d = torch.logical_or(
+        exp_q,
+        exp_k
+    )
+    
+    attn_mask_3d = torch.repeat_interleave(attn_mask_2d, num_heads, dim=0)  # [N * H, T, S]
+    
+    return attn_mask_3d
+
+
+def with_pos_embed(tensor, pos: Optional[Tensor]):
+    return tensor if pos is None else tensor + pos
+
+
+def _get_clones(module, N):
+    return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
+
+
+def generate_square_subsequent_mask(sz):
+    r"""Generate a square mask for the sequence. The masked positions are filled with float('-inf').
+        Unmasked positions are filled with float(0.0).
+    """
+    mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
+    mask = mask.float().masked_fill(mask == 0, float(
+        '-inf')).masked_fill(mask == 1, float(0.0))
+    return mask
 
 
 def ensure_unmasked_values(mask, unmasked_ratio = 0.01):

@@ -6,6 +6,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
 from .position_encoding import build_position_encoding
+from .utils import _get_clones, generate_square_subsequent_mask
+from .transformer_modules import feed_forward, SelfAttResidual, CrossAttResidual, FFResidual, DecoderEmbeddings
 
 
 class ConcatTransformer(nn.Module):
@@ -140,219 +142,96 @@ class TransformerEncoderLayer(nn.Module):
     def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1,
                  activation="relu", normalize_before=False):
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-        # Implementation of Feedforward model
-        self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.dropout = nn.Dropout(dropout)
-        self.linear2 = nn.Linear(dim_feedforward, d_model)
 
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
+        # Self-Att
+        self.self_attn = SelfAttResidual(
+            nn.MultiheadAttention(d_model, nhead, dropout=dropout),
+            dimension=d_model,
+            dropout=dropout
+        )
+        
+        # Feedforward
+        self.ff = FFResidual(
+            feed_forward(dim_input=d_model, dim_feedforward=dim_feedforward),
+            dimension=d_model,
+            dropout=dropout)
 
-        self.activation = _get_activation_fn(activation)
-        self.normalize_before = normalize_before
-
-    def with_pos_embed(self, tensor, pos: Optional[Tensor]):
-        return tensor if pos is None else tensor + pos
-
-    def forward_post(self,
+    def forward(self,
                      src,
-                     src_mask: Optional[Tensor] = None,
+                     src_mask: Optional[Tensor] = None,  # is None during inference
                      src_key_padding_mask: Optional[Tensor] = None,
                      pos: Optional[Tensor] = None):
-        q = k = v = self.with_pos_embed(src, pos)
-        # TODO return attention here
-        src2 = self.self_attn(query=q, key=k, value=v, 
-                              attn_mask=src_mask,
-                              key_padding_mask=src_key_padding_mask
-                              )[0]
-        src = src + self.dropout1(src2)
-        src = self.norm1(src)
-        src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
-        src = src + self.dropout2(src2)
-        src = self.norm2(src)
+        
+        # self attention
+        src, _ = self.self_attn(
+            qkv=src,
+            qkv_pos=pos,
+            attn_mask=None,
+            key_padding_mask=src_key_padding_mask
+        )
+        # feedforward
+        src = self.ff(
+            src
+        )
+
         return src
-
-    def forward_pre(self, src,
-                    src_mask: Optional[Tensor] = None,
-                    src_key_padding_mask: Optional[Tensor] = None,
-                    pos: Optional[Tensor] = None):
-        src2 = self.norm1(src)
-        q = k = v = self.with_pos_embed(src2, pos)
-        src2 = self.self_attn(query=q, key=k, value=v, 
-                              attn_mask=src_mask,
-                              key_padding_mask=src_key_padding_mask
-                              )[0]
-        src = src + self.dropout1(src2)
-        src2 = self.norm2(src)
-        src2 = self.linear2(self.dropout(self.activation(self.linear1(src2))))
-        src = src + self.dropout2(src2)
-        return src
-
-    def forward(self, src,
-                src_mask: Optional[Tensor] = None,
-                src_key_padding_mask: Optional[Tensor] = None,
-                pos: Optional[Tensor] = None):
-        if self.normalize_before:
-            return self.forward_pre(src, src_mask, src_key_padding_mask, pos)
-        return self.forward_post(src, src_mask, src_key_padding_mask, pos)
-
 
 class TransformerDecoderLayer(nn.Module):
 
     def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1,
                  activation="relu", normalize_before=False):
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-        self.multihead_attn = nn.MultiheadAttention(
-            d_model, nhead, dropout=dropout)
-        # Implementation of Feedforward model
-        self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.dropout = nn.Dropout(dropout)
-        self.linear2 = nn.Linear(dim_feedforward, d_model)
 
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.norm3 = nn.LayerNorm(d_model)
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
-        self.dropout3 = nn.Dropout(dropout)
+        # Expression Self-Attention
+        self.tgt_self_attn = SelfAttResidual(
+            nn.MultiheadAttention(d_model, nhead, dropout=dropout),
+            dimension=d_model,
+            dropout=dropout)
 
-        self.activation = _get_activation_fn(activation)
-        self.normalize_before = normalize_before
+        # Expression/Memory Cross-Attention
+        self.tgt_src_cross_attn = CrossAttResidual(
+            nn.MultiheadAttention(d_model, nhead, dropout=dropout),
+            dimension=d_model,
+            dropout=dropout)
+        
+        # Feed Forward
+        self.ff = FFResidual(
+            feed_forward(dim_input=d_model, dim_feedforward=dim_feedforward),
+            dimension=d_model,
+            dropout=dropout)
 
-    def with_pos_embed(self, tensor, pos: Optional[Tensor]):
-        return tensor if pos is None else tensor + pos
-
-    def forward_post(self, tgt, memory,
+    def forward(self, tgt, memory,
                      tgt_mask: Optional[Tensor] = None,
-                     memory_mask: Optional[Tensor] = None,
+                     memory_mask: Optional[Tensor] = None,  # is None during inference
                      tgt_key_padding_mask: Optional[Tensor] = None,
                      memory_key_padding_mask: Optional[Tensor] = None,
                      pos: Optional[Tensor] = None,
                      query_pos: Optional[Tensor] = None):
-        q = k = v = self.with_pos_embed(tgt, query_pos)
-        tgt2 = self.self_attn(query=q, key=k, value=v, 
-                              attn_mask=tgt_mask,
-                              key_padding_mask=tgt_key_padding_mask
-                              )[0]
-        tgt = tgt + self.dropout1(tgt2)
-        tgt = self.norm1(tgt)
-
-        q = tgt
-        k = v = memory
-        tgt2 = self.multihead_attn(query=q, key=k, value=v, 
-                                   attn_mask=memory_mask,
-                                   key_padding_mask=memory_key_padding_mask
-                                   )[0]
-        tgt = tgt + self.dropout2(tgt2)
-        tgt = self.norm2(tgt)
-        tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
-        tgt = tgt + self.dropout3(tgt2)
-        tgt = self.norm3(tgt)
-        return tgt
-
-    def forward_pre(self, tgt, memory,
-                    tgt_mask: Optional[Tensor] = None,
-                    memory_mask: Optional[Tensor] = None,
-                    tgt_key_padding_mask: Optional[Tensor] = None,
-                    memory_key_padding_mask: Optional[Tensor] = None,
-                    pos: Optional[Tensor] = None,
-                    query_pos: Optional[Tensor] = None):
-        tgt2 = self.norm1(tgt)
-        q = k = v = self.with_pos_embed(tgt2, query_pos)
-        tgt2 = self.self_attn(query=q, key=k, value=v, 
-                              attn_mask=tgt_mask,
-                              key_padding_mask=tgt_key_padding_mask
-                              )[0]
-        tgt = tgt + self.dropout1(tgt2)
-        tgt2 = self.norm2(tgt)
-
-        q = tgt2
-        k = v = memory
-        tgt2 = self.multihead_attn(query=q, key=k, value=v, 
-                                   attn_mask=memory_mask,
-                                   key_padding_mask=memory_key_padding_mask
-                                   )[0]
-        tgt = tgt + self.dropout2(tgt2)
-        tgt2 = self.norm3(tgt)
         
-        tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt2))))
-        tgt = tgt + self.dropout3(tgt2)
-        return tgt
-
-    def forward(self, tgt, memory,
-                tgt_mask: Optional[Tensor] = None,
-                memory_mask: Optional[Tensor] = None,
-                tgt_key_padding_mask: Optional[Tensor] = None,
-                memory_key_padding_mask: Optional[Tensor] = None,
-                pos: Optional[Tensor] = None,
-                query_pos: Optional[Tensor] = None):
-        if self.normalize_before:
-            return self.forward_pre(tgt, memory, tgt_mask, memory_mask,
-                                    tgt_key_padding_mask, memory_key_padding_mask, pos, query_pos)
-        return self.forward_post(tgt, memory, tgt_mask, memory_mask,
-                                 tgt_key_padding_mask, memory_key_padding_mask, pos, query_pos)
-
-
-class DecoderEmbeddings(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.word_embeddings = nn.Embedding(
-            config.vocab_size, config.hidden_dim, padding_idx=config.pad_token_id)
-        self.position_embeddings = nn.Embedding(
-            config.max_position_embeddings, config.hidden_dim
+        # EXPRESSION SELF ATT
+        tgt, _ = self.tgt_self_attn(
+            qkv=tgt,
+            qkv_pos=query_pos,
+            attn_mask=tgt_mask,
+            key_padding_mask=tgt_key_padding_mask
         )
 
-        self.LayerNorm = torch.nn.LayerNorm(
-            config.hidden_dim, eps=config.layer_norm_eps)
-        self.dropout = nn.Dropout(config.dropout)
+        # EXPRESSION / TARGET CROSS ATT
+        tgt, _ = self.tgt_src_cross_attn(
+            q=tgt,
+            kv=memory,
+            q_pos=query_pos,
+            k_pos=pos,
+            attn_mask=None,
+            key_padding_mask=memory_key_padding_mask
+        )
 
-    def forward(self, x):
-        input_shape = x.size()
-        seq_length = input_shape[1]
-        device = x.device
+        # FEED FORWARD
+        tgt = self.ff(
+            tgt
+        )
 
-        position_ids = torch.arange(
-            seq_length, dtype=torch.long, device=device)
-        position_ids = position_ids.unsqueeze(0).expand(input_shape)
-
-        input_embeds = self.word_embeddings(x)
-        position_embeds = self.position_embeddings(position_ids)
-
-        embeddings = input_embeds + position_embeds
-        embeddings = self.LayerNorm(embeddings)
-        embeddings = self.dropout(embeddings)
-
-        return embeddings
-
-
-def _get_clones(module, N):
-    return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
-
-
-def _get_activation_fn(activation):
-    """Return an activation function given a string"""
-    if activation == "relu":
-        return F.relu
-    if activation == "gelu":
-        return F.gelu
-    if activation == "glu":
-        return F.glu
-    raise RuntimeError(F"activation should be relu/gelu, not {activation}.")
-
-
-def generate_square_subsequent_mask(sz):
-    r"""Generate a square mask for the sequence. The masked positions are filled with float('-inf').
-        Unmasked positions are filled with float(0.0).
-    """
-    mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
-    mask = mask.float().masked_fill(mask == 0, float(
-        '-inf')).masked_fill(mask == 1, float(0.0))
-    return mask
-
+        return tgt
 
 def build_transformer(config):
     return ConcatTransformer(
