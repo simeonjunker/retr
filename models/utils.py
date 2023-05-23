@@ -35,8 +35,6 @@ def ensure_unmasked_values(mask, unmasked_ratio = 0.01):
     
     if False in dim_contains_unmasked:
 
-        print('all values masked out. unmasking some values...')
-
         filler_mask = torch.ones((h, w), dtype=bool, device=mask.device.type)  # create dummy mask filled with True
         flatten_filler_mask = filler_mask.flatten()
 

@@ -7,7 +7,6 @@ import torch.nn.functional as F
 from torch import nn, Tensor
 from .position_encoding import build_position_encoding
 
-
 class DecoderCrossAttTransformer(nn.Module):
 
     # ENCODER
@@ -200,72 +199,69 @@ class TransformerEncoderLayer(nn.Module):
         super().__init__()
 
         # Target Self-Att
-        self.t_self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-        self.t_dropout = nn.Dropout(dropout)
-        self.t_norm_1 = nn.LayerNorm(d_model)
-        self.t_norm_2 = nn.LayerNorm(d_model)
+        self.t_self_attn = SelfAttResidual(
+            nn.MultiheadAttention(d_model, nhead, dropout=dropout),
+            dimension=d_model,
+            dropout=dropout
+        )
 
         # Context Self-Att
-        self.c_self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-        self.c_dropout = nn.Dropout(dropout)
-        self.c_norm_1 = nn.LayerNorm(d_model)
-        self.c_norm_2 = nn.LayerNorm(d_model)
-
+        self.c_self_attn = SelfAttResidual(
+            nn.MultiheadAttention(d_model, nhead, dropout=dropout),
+            dimension=d_model,
+            dropout=dropout
+        )
+        
         # Target Feedforward
-        self.t_linear1 = nn.Linear(d_model, dim_feedforward)
-        self.t_dropout1 = nn.Dropout(dropout)
-        self.t_linear2 = nn.Linear(dim_feedforward, d_model)
-        self.t_dropout2 = nn.Dropout(dropout)
+        self.t_ff = FFResidual(
+            feed_forward(dim_input=d_model, dim_feedforward=dim_feedforward),
+            dimension=d_model,
+            dropout=dropout)
 
         # Context Feedforward
-        self.c_linear1 = nn.Linear(d_model, dim_feedforward)
-        self.c_dropout1 = nn.Dropout(dropout)
-        self.c_linear2 = nn.Linear(dim_feedforward, d_model)
-        self.c_dropout2 = nn.Dropout(dropout)
+        self.c_ff = FFResidual(
+            feed_forward(dim_input=d_model, dim_feedforward=dim_feedforward),
+            dimension=d_model,
+            dropout=dropout)
+        
 
-        self.activation = _get_activation_fn(activation)
-        self.normalize_before = normalize_before
-
-    def with_pos_embed(self, tensor, pos: Optional[Tensor]):
-        return tensor if pos is None else tensor + pos
-
-    def forward(self, src_t, src_c,
-                    src_t_mask: Optional[Tensor] = None,
-                    src_c_mask: Optional[Tensor] = None,
-                    src_c_key_padding_mask: Optional[Tensor] = None,
-                    src_t_key_padding_mask: Optional[Tensor] = None,
-                    pos_c: Optional[Tensor] = None,
-                    pos_t: Optional[Tensor] = None):
+    def forward(
+            self, 
+            src_t, src_c,
+            src_t_mask: Optional[Tensor] = None,  # is None during inference
+            src_c_mask: Optional[Tensor] = None,  # is None during inference
+            src_c_key_padding_mask: Optional[Tensor] = None,
+            src_t_key_padding_mask: Optional[Tensor] = None,
+            pos_c: Optional[Tensor] = None,
+            pos_t: Optional[Tensor] = None
+        ):
     
-        assert self.normalize_before
 
-        # encode target via self-attention
-        src_t2 = self.t_norm_1(src_t)
-        q = k = v = self.with_pos_embed(src_t2, pos_t)
-        src_t2 = self.t_self_attn(query=q, key=k, value=v, 
-                            attn_mask=src_t_mask,
-                            key_padding_mask=src_t_key_padding_mask
-                            )[0]
-        src_t = src_t + self.t_dropout(src_t2)
-        src_t2 = self.t_norm_2(src_t)
+        # TARGET
+        # self attention
+        src_t, _ = self.t_self_attn(
+            qkv=src_t,
+            qkv_pos=pos_t,
+            attn_mask=None,
+            key_padding_mask=src_t_key_padding_mask
+        )
+        # feedforward
+        src_t = self.t_ff(
+            src_t
+        )
 
-        # target linear layer
-        src_t2 = self.t_linear2(self.t_dropout1(self.activation(self.t_linear1(src_t2))))
-        src_t = src_t + self.t_dropout2(src_t2)
-
-        # encode context via self-attention
-        src_c2 = self.c_norm_1(src_c)
-        q = k = v = self.with_pos_embed(src_c2, pos_c)
-        src_c2 = self.c_self_attn(query=q, key=k, value=v, 
-                            attn_mask=src_c_mask,
-                            key_padding_mask=src_c_key_padding_mask
-                            )[0]
-        src_c = src_c + self.c_dropout(src_c2)
-        src_c2 = self.c_norm_2(src_c)
-
-        # context linear layer
-        src_c2 = self.c_linear2(self.c_dropout1(self.activation(self.c_linear1(src_c2))))
-        src_c = src_c + self.c_dropout2(src_c2)
+        # CONTEXT
+        # self attention
+        src_c, _ = self.c_self_attn(
+            qkv=src_c,
+            qkv_pos=pos_c,
+            attn_mask=None,
+            key_padding_mask=src_c_key_padding_mask
+        )
+        # feedforward
+        src_c = self.c_ff(
+            src_c
+        )
 
         return src_t, src_c
 
@@ -281,88 +277,176 @@ class TransformerDecoderLayer(nn.Module):
                  activation="relu", normalize_before=False):
         super().__init__()
         
-        # Expression Target Self-Attention
-        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-        self.norm1 = nn.LayerNorm(d_model)
-        self.dropout1 = nn.Dropout(dropout)
+        # Expression Self-Attention
+        self.tgt_self_attn = SelfAttResidual(
+            nn.MultiheadAttention(d_model, nhead, dropout=dropout),
+            dimension=d_model,
+            dropout=dropout)
 
-        # Referential Target Cross-Attention
-        self.t_multihead_attn = nn.MultiheadAttention(
-            d_model, nhead, dropout=dropout)
-        self.t_norm = nn.LayerNorm(d_model)
-        self.t_dropout = nn.Dropout(dropout)
+        # Expression/Target Cross-Attention
+        self.tgt_t_cross_attn = CrossAttResidual(
+            nn.MultiheadAttention(d_model, nhead, dropout=dropout),
+            dimension=d_model,
+            dropout=dropout)
 
-        # Referential Context Cross-Attention
-        self.c_multihead_attn = nn.MultiheadAttention(
-            d_model, nhead, dropout=dropout)
-        self.c_norm = nn.LayerNorm(d_model)
-        self.c_dropout = nn.Dropout(dropout)
+        # Expression/Context Cross-Attention
+        self.tgt_c_cross_attn = CrossAttResidual(
+            nn.MultiheadAttention(d_model, nhead, dropout=dropout),
+            dimension=d_model,
+            dropout=dropout)
 
-        # Implementation of Feedforward model
-        self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.linear2 = nn.Linear(dim_feedforward, d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.dropout2 = nn.Dropout(dropout)
-        self.dropout3 = nn.Dropout(dropout)
-
-        self.activation = _get_activation_fn(activation)
-        self.normalize_before = normalize_before
-
-    def with_pos_embed(self, tensor, pos: Optional[Tensor]):
-        return tensor if pos is None else tensor + pos
-
-    def forward(self, 
-                    tgt, 
-                    t_memory,
-                    c_memory,
-                    tgt_mask: Optional[Tensor] = None,
-                    t_memory_mask: Optional[Tensor] = None,
-                    c_memory_mask: Optional[Tensor] = None,
-                    tgt_key_padding_mask: Optional[Tensor] = None,
-                    t_memory_key_padding_mask: Optional[Tensor] = None,
-                    c_memory_key_padding_mask: Optional[Tensor] = None,
-                    t_pos: Optional[Tensor] = None,
-                    c_pos: Optional[Tensor] = None,
-                    query_pos: Optional[Tensor] = None):
+        # Feed Forward
+        self.ff = FFResidual(
+            feed_forward(dim_input=d_model, dim_feedforward=dim_feedforward),
+            dimension=d_model,
+            dropout=dropout)
         
-        assert self.normalize_before
 
-        # self-attention
-        tgt2 = self.norm1(tgt)
-        q = k = v = self.with_pos_embed(tgt2, query_pos)
-        tgt2 = self.self_attn(query=q, key=k, value=v, 
-                              attn_mask=tgt_mask,
-                              key_padding_mask=tgt_key_padding_mask
-                              )[0]
-        tgt = tgt + self.dropout1(tgt2)
+    def forward(
+            self,
+            tgt,
+            t_memory,
+            c_memory,
+            tgt_mask: Optional[Tensor] = None,
+            t_memory_mask: Optional[Tensor] = None,  # is None during inference
+            c_memory_mask: Optional[Tensor] = None,  # is None during inference
+            tgt_key_padding_mask: Optional[Tensor] = None,
+            t_memory_key_padding_mask: Optional[Tensor] = None,
+            c_memory_key_padding_mask: Optional[Tensor] = None,
+            t_pos: Optional[Tensor] = None,
+            c_pos: Optional[Tensor] = None,
+            query_pos: Optional[Tensor] = None
+        ):
+        
+        # EXPRESSION SELF ATT
+        tgt, _ = self.tgt_self_attn(
+            qkv=tgt,
+            qkv_pos=query_pos,
+            attn_mask=tgt_mask,
+            key_padding_mask=tgt_key_padding_mask
+        )
 
-        # target/expression cross-attention
-        tgt2 = self.t_norm(tgt)
-        q = tgt2
-        k = v = t_memory
-        tgt2 = self.t_multihead_attn(query=q, key=v, value=v, 
-                                     attn_mask=t_memory_mask,
-                                     key_padding_mask=t_memory_key_padding_mask
-                                     )[0]
-        tgt = tgt + self.t_dropout(tgt2)
+        # EXPRESSION / TARGET CROSS ATT
+        tgt, _ = self.tgt_t_cross_attn(
+            q=tgt,
+            kv=t_memory,
+            q_pos=query_pos,
+            k_pos=t_pos,
+            attn_mask=None,
+            key_padding_mask=t_memory_key_padding_mask
+        )
 
-        # context/expression cross-attention
-        # TODO return attention here
-        tgt2 = self.c_norm(tgt)
-        q = tgt2
-        k = v = c_memory
-        tgt2, att_weights = self.c_multihead_attn(query=q, key=k, value=v, 
-                                     attn_mask=c_memory_mask,
-                                     key_padding_mask=c_memory_key_padding_mask
-                                     )
-        tgt = tgt + self.c_dropout(tgt2)
+        # EXPRESSION / CONTEXT CROSS ATT
+        tgt, _ = self.tgt_c_cross_attn(
+            q=tgt,
+            kv=c_memory,
+            q_pos=query_pos,
+            k_pos=c_pos,
+            attn_mask=None,
+            key_padding_mask=c_memory_key_padding_mask
+        )
 
-        # linear
-        tgt2 = self.norm2(tgt)
-        tgt2 = self.linear2(self.dropout2(self.activation(self.linear1(tgt2))))
-        tgt = tgt + self.dropout3(tgt2)
+        # FEED FORWARD
+        tgt = self.ff(
+            tgt
+        )
 
         return tgt
+    
+
+def feed_forward(dim_input, dim_feedforward):
+    return nn.Sequential(
+        nn.Linear(dim_input, dim_feedforward),
+        nn.ReLU(),
+        nn.Linear(dim_feedforward, dim_input),
+    )
+
+
+class AttResidualBase(nn.Module):
+    def __init__(self, sublayer, dimension, dropout=0.1):
+        super().__init__()
+        self.sublayer = sublayer
+        self.dropout = nn.Dropout(dropout)
+        self.norm = nn.LayerNorm(dimension)
+
+
+class SelfAttResidual(AttResidualBase):
+    def forward(
+            self, 
+            qkv,
+            qkv_pos,
+            key_padding_mask, attn_mask
+        ):
+
+        # pre norm
+        norm_qkv = self.norm(qkv)
+
+        # positional encoding, query/key/value tensors
+        query = key = with_pos_embed(norm_qkv, qkv_pos)
+        value = norm_qkv
+
+        # self attention
+        att_out, att_weights = self.sublayer(
+            query=query, key=key, value=value,
+            key_padding_mask=key_padding_mask, attn_mask=attn_mask
+        )
+
+        # residual + dropout
+        res_out = qkv + self.dropout(att_out)
+        
+        return res_out, att_weights
+
+
+class CrossAttResidual(AttResidualBase):
+    def forward(
+            self, 
+            q, kv,
+            q_pos, k_pos,
+            key_padding_mask, attn_mask
+        ):
+
+        # pre norm
+        norm_q = self.norm(q)
+
+        # positional encoding, query/key/value tensors
+        query = with_pos_embed(norm_q, q_pos)
+        key = with_pos_embed(kv, k_pos)
+        value = kv
+
+        # cross attention
+        att_out, att_weights = self.sublayer(
+            query=query, key=key, value=value,
+            key_padding_mask=key_padding_mask, attn_mask=attn_mask
+        )
+
+        # residual + dropout
+        res_out = q + self.dropout(att_out)
+        
+        return res_out, att_weights
+
+
+class FFResidual(nn.Module):
+    def __init__(self, sublayer, dimension, dropout=0.1):
+        super().__init__()
+        self.sublayer = sublayer
+        self.dropout = nn.Dropout(dropout)
+        self.norm = nn.LayerNorm(dimension)
+
+    def forward(
+            self, x
+        ):
+
+        # pre norm
+        x_norm = self.norm(x)
+
+        # feedforward
+        ff_out = self.sublayer(x_norm)
+
+        # residual + dropout
+        res_out = x + self.dropout(ff_out)
+
+        return res_out
+   
 
 class DecoderEmbeddings(nn.Module):
     def __init__(self, config):
@@ -396,19 +480,12 @@ class DecoderEmbeddings(nn.Module):
         return embeddings
 
 
+def with_pos_embed(tensor, pos: Optional[Tensor]):
+    return tensor if pos is None else tensor + pos
+
+
 def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
-
-
-def _get_activation_fn(activation):
-    """Return an activation function given a string"""
-    if activation == "relu":
-        return F.relu
-    if activation == "gelu":
-        return F.gelu
-    if activation == "glu":
-        return F.glu
-    raise RuntimeError(F"activation should be relu/gelu, not {activation}.")
 
 
 def generate_square_subsequent_mask(sz):
