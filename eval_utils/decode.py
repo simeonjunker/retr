@@ -128,3 +128,42 @@ def greedy_decoding(samples, model, tokenizer, max_len=20, clean=True, pad_token
     sents = idx2sents(pruned_caption_idx, tokenizer)
 
     return sents
+
+
+def greedy_with_att(model, sample, tokenizer, start_token=1, end_token=2, max_pos_embeddings=128, return_raw=True):
+    """greedy decoding for a single image, outputs attention"""
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
+    caption, cap_mask = create_caption_and_mask(
+        start_token, max_pos_embeddings)
+    
+    sample = [s.to(device) for s in sample]
+    caption = caption.to(device)
+    cap_mask = cap_mask.to(device)
+    
+    atts = []
+
+    with torch.no_grad():
+        model.eval()
+
+        for i in range(max_pos_embeddings - 1):
+            predictions, att = model(*sample, caption, cap_mask, return_attention=True)
+            predictions = predictions[:, i, :]
+            predicted_id = torch.argmax(predictions, axis=-1)
+                        
+            atts.append(att)
+
+            if predicted_id[0] == end_token:
+                break
+
+            caption[:, i+1] = predicted_id[0]
+            cap_mask[:, i+1] = False
+
+    token_ids = caption[0][~cap_mask[0]]
+
+    # return raw sequence + atts
+    if return_raw:
+        return token_ids, atts
+    # return decoded sequence + atts
+    return tokenizer.decode(token_ids, skip_special_tokens=True), atts

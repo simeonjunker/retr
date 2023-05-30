@@ -22,7 +22,7 @@ class Caption(nn.Module):
         self.transformer = transformer
         self.mlp = MLP(hidden_dim, 512, vocab_size, 3)
 
-    def forward(self, samples, target_exp, target_exp_mask):
+    def forward(self, samples, target_exp, target_exp_mask, return_attention=False):
 
         # target features
 
@@ -59,7 +59,7 @@ class CaptionLoc(nn.Module):
         self.transformer = transformer
         self.mlp = MLP(hidden_dim, 512, vocab_size, 3)
 
-    def forward(self, t_samples, loc_feats, target_exp, target_exp_mask):
+    def forward(self, t_samples, loc_feats, target_exp, target_exp_mask, return_attention=False):
 
         # target features
         if not isinstance(t_samples, NestedTensor):
@@ -103,7 +103,7 @@ class CaptionGlobalLoc(nn.Module):
         self.transformer = transformer
         self.mlp = MLP(hidden_dim, 512, vocab_size, 3)
 
-    def forward(self, t_samples, g_samples, loc_feats, target_exp, target_exp_mask):
+    def forward(self, t_samples, g_samples, loc_feats, target_exp, target_exp_mask, return_attention=False):
 
         # target features
         if not isinstance(t_samples, NestedTensor):
@@ -138,11 +138,15 @@ class CaptionGlobalLoc(nn.Module):
         g_src = g_src.flatten(2)
         g_mask = g_mask.flatten(1)
 
-        hs = self.transformer(
+        hs, att = self.transformer(
             src_t=target_src, mask_t=target_mask, 
             src_c=g_src, mask_c=g_mask, 
             tgt=target_exp, tgt_mask=target_exp_mask)
         out = self.mlp(hs.permute(1, 0, 2))
+        
+        if return_attention:
+            return out, att
+        
         return out
     
 class CaptionSceneLoc(nn.Module):
@@ -161,7 +165,7 @@ class CaptionSceneLoc(nn.Module):
         self.transformer = transformer
         self.mlp = MLP(hidden_dim, 512, vocab_size, 3)
 
-    def forward(self, t_samples, loc_feats, s_features, target_exp, target_exp_mask):
+    def forward(self, t_samples, loc_feats, s_features, target_exp, target_exp_mask, return_attention=False):
 
         # target features
         if not isinstance(t_samples, NestedTensor):

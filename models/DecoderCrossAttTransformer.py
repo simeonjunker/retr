@@ -7,6 +7,7 @@ from torch import nn, Tensor
 from .position_encoding import build_position_encoding
 from .utils import _get_clones, generate_square_subsequent_mask
 from .transformer_modules import feed_forward, SelfAttResidual, CrossAttResidual, FFResidual, DecoderEmbeddings
+from collections import defaultdict
 
 
 class DecoderCrossAttTransformer(nn.Module):
@@ -22,8 +23,7 @@ class DecoderCrossAttTransformer(nn.Module):
 
     def __init__(self, config, d_model=512, nhead=8, num_encoder_layers=6,
                  num_decoder_layers=6, dim_feedforward=2048, dropout=0.1,
-                 activation="relu", normalize_before=False,
-                 return_intermediate_dec=False):
+                 activation="relu", normalize_before=False):
         super().__init__()
 
         encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
@@ -37,8 +37,7 @@ class DecoderCrossAttTransformer(nn.Module):
         decoder_layer = TransformerDecoderLayer(d_model, nhead, dim_feedforward,
                                                 dropout, activation, normalize_before)
         decoder_norm = nn.LayerNorm(d_model)
-        self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm,
-                                          return_intermediate=return_intermediate_dec)
+        self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm)
 
         self._reset_parameters()
 
@@ -70,13 +69,13 @@ class DecoderCrossAttTransformer(nn.Module):
         query_embed = query_embed.repeat(1, bs, 1)
 
         # Dual Encoder (separate for target / context)
-        memory_t, memory_c = self.encoder(
+        memory_t, memory_c, encoder_atts = self.encoder(
             src_t, src_c,
             src_t_key_padding_mask=mask_t, src_c_key_padding_mask=mask_c,
             pos_t=pos_t, pos_c=pos_c
         )
         # Decoder (with target / context merge via cross-attention)
-        hs = self.decoder(
+        out, decoder_atts = self.decoder(
             tgt, 
             memory_t, 
             memory_c, 
@@ -89,7 +88,9 @@ class DecoderCrossAttTransformer(nn.Module):
             query_pos=query_embed
         )
 
-        return hs
+        atts = {**encoder_atts, **decoder_atts}
+
+        return out, atts
 
 
 class TransformerEncoder(nn.Module):
@@ -112,22 +113,31 @@ class TransformerEncoder(nn.Module):
                 pos_t: Optional[Tensor] = None, pos_c: Optional[Tensor] = None
                 ):
         
+        all_layer_atts = defaultdict(list)
+
         out_t, out_c = src_t, src_c
 
         for layer in self.layers:
-            out_t, out_c = layer(
+            out_t, out_c, att_dict = layer(
                 out_t, out_c,
                 src_t_mask=src_t_mask, src_c_mask=src_c_mask, 
                 src_t_key_padding_mask=src_t_key_padding_mask, src_c_key_padding_mask=src_c_key_padding_mask, 
                 pos_t=pos_t, pos_c=pos_c
             )
 
+            for att_label, att_values in att_dict.items():
+                all_layer_atts[att_label].append(att_values)
+
+        stacked_atts = dict()
+        for att_label, att_value_list in all_layer_atts.items():
+            stacked_atts[att_label] = torch.stack(att_value_list)
+
         if self.t_norm is not None:
             out_t = self.t_norm(out_t)
         if self.c_norm is not None:
             out_c = self.c_norm(out_c)
 
-        return out_t, out_c
+        return out_t, out_c, stacked_atts
 
 
 class TransformerDecoder(nn.Module):
@@ -137,12 +147,11 @@ class TransformerDecoder(nn.Module):
     # [SAtt_Cap] / [SAtt_T] -> CrossAtt#1 -> [SAtt_Cap] | Merge Cap / Target
     # [SAtt_Cap] / [SAtt_C] -> CrossAtt#2 -> [Out]      | Merge Cap / Context
 
-    def __init__(self, decoder_layer, num_layers, norm=None, return_intermediate=False):
+    def __init__(self, decoder_layer, num_layers, norm=None):
         super().__init__()
         self.layers = _get_clones(decoder_layer, num_layers)
         self.num_layers = num_layers
         self.norm = norm
-        self.return_intermediate = return_intermediate
 
     def forward(self, 
                 tgt, 
@@ -160,10 +169,10 @@ class TransformerDecoder(nn.Module):
         
         output = tgt
 
-        intermediate = []
+        all_layer_atts = defaultdict(list)
 
         for layer in self.layers:
-            output = layer(output, 
+            output, att_dict = layer(output, 
                            t_memory, 
                            c_memory, 
                            tgt_mask=tgt_mask,
@@ -175,20 +184,18 @@ class TransformerDecoder(nn.Module):
                            t_pos=t_pos, 
                            c_pos=c_pos,                            
                            query_pos=query_pos)
-            if self.return_intermediate:
-                intermediate.append(self.norm(output))
+
+            for att_label, att_values in att_dict.items():
+                all_layer_atts[att_label].append(att_values)
+
+        stacked_atts = dict()
+        for att_label, att_value_list in all_layer_atts.items():
+            stacked_atts[att_label] = torch.stack(att_value_list)
 
         if self.norm is not None:
             output = self.norm(output)
-            if self.return_intermediate:
-                intermediate.pop()
-                intermediate.append(output)
 
-        if self.return_intermediate:
-            return torch.stack(intermediate)
-
-        return output
-
+        return output, stacked_atts
 
 class TransformerEncoderLayer(nn.Module):
 
@@ -238,15 +245,19 @@ class TransformerEncoderLayer(nn.Module):
             pos_t: Optional[Tensor] = None
         ):
     
+        att_values = dict()
 
         # TARGET
         # self attention
-        src_t, _ = self.t_self_attn(
+
+        att_label = 'enc_t_self_att'
+        src_t, att_value = self.t_self_attn(
             qkv=src_t,
             qkv_pos=pos_t,
             attn_mask=None,
             key_padding_mask=src_t_key_padding_mask
         )
+        att_values[att_label] = att_value
         # feedforward
         src_t = self.t_ff(
             src_t
@@ -254,18 +265,20 @@ class TransformerEncoderLayer(nn.Module):
 
         # CONTEXT
         # self attention
-        src_c, _ = self.c_self_attn(
+        att_label = 'enc_c_self_att'
+        src_c, att_value = self.c_self_attn(
             qkv=src_c,
             qkv_pos=pos_c,
             attn_mask=None,
             key_padding_mask=src_c_key_padding_mask
         )
+        att_values[att_label] = att_value
         # feedforward
         src_c = self.c_ff(
             src_c
         )
 
-        return src_t, src_c
+        return src_t, src_c, att_values
 
 
 class TransformerDecoderLayer(nn.Module):
@@ -319,17 +332,22 @@ class TransformerDecoderLayer(nn.Module):
             c_pos: Optional[Tensor] = None,
             query_pos: Optional[Tensor] = None
         ):
-        
+
+        att_values = dict()
+
         # EXPRESSION SELF ATT
-        tgt, _ = self.tgt_self_attn(
+        att_label = 'dec_exp_self_att'
+        tgt, att_value = self.tgt_self_attn(
             qkv=tgt,
             qkv_pos=query_pos,
             attn_mask=tgt_mask,
             key_padding_mask=tgt_key_padding_mask
         )
+        att_values[att_label] = att_value
 
         # EXPRESSION / TARGET CROSS ATT
-        tgt, _ = self.tgt_t_cross_attn(
+        att_label = 'dec_exp_t_cross_att'
+        tgt, att_value = self.tgt_t_cross_attn(
             q=tgt,
             kv=t_memory,
             q_pos=query_pos,
@@ -337,9 +355,11 @@ class TransformerDecoderLayer(nn.Module):
             attn_mask=None,
             key_padding_mask=t_memory_key_padding_mask
         )
+        att_values[att_label] = att_value
 
         # EXPRESSION / CONTEXT CROSS ATT
-        tgt, _ = self.tgt_c_cross_attn(
+        att_label = 'dec_exp_c_cross_att'
+        tgt, att_value = self.tgt_c_cross_attn(
             q=tgt,
             kv=c_memory,
             q_pos=query_pos,
@@ -347,13 +367,14 @@ class TransformerDecoderLayer(nn.Module):
             attn_mask=None,
             key_padding_mask=c_memory_key_padding_mask
         )
+        att_values[att_label] = att_value
 
         # FEED FORWARD
         tgt = self.ff(
             tgt
         )
 
-        return tgt
+        return tgt, att_values
 
 
 def build_transformer(config):
@@ -365,6 +386,5 @@ def build_transformer(config):
         dim_feedforward=config.dim_feedforward,
         num_encoder_layers=config.enc_layers,
         num_decoder_layers=config.dec_layers,
-        normalize_before=config.pre_norm,
-        return_intermediate_dec=False,
+        normalize_before=config.pre_norm
     )
