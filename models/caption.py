@@ -199,13 +199,16 @@ class CaptionSceneLoc(nn.Module):
 
         s_mask = torch.zeros((b, n_feats), dtype=bool).to(t_mask.device)  # mask with only False values -> [b, n_feats]
 
-        hs = self.transformer(
+        hs, att = self.transformer(
             src_t=target_src, mask_t=target_mask, 
             src_c=s_src, mask_c=s_mask, 
             tgt=target_exp, tgt_mask=target_exp_mask)
         out = self.mlp(hs.permute(1, 0, 2))
-        return out
-    
+        
+        if return_attention:
+            return out, att
+        
+        return out    
 
 class MLP(nn.Module):
     """ Very simple multi-layer perceptron (also called FFN)"""
