@@ -152,15 +152,15 @@ def greedy_with_att(model, sample, tokenizer, start_token=1, end_token=2, max_po
             predictions = predictions[:, i, :]
             predicted_id = torch.argmax(predictions, axis=-1)
                         
+            caption[:, i+1] = predicted_id[0]
+            cap_mask[:, i+1] = False
             atts.append(att)
 
             if predicted_id[0] == end_token:
                 break
 
-            caption[:, i+1] = predicted_id[0]
-            cap_mask[:, i+1] = False
-
     token_ids = caption[0][~cap_mask[0]]
+    token_ids = token_ids[1:]
 
     # return raw sequence + atts
     if return_raw:

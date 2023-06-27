@@ -99,7 +99,7 @@ class CaptionGlobalLoc(nn.Module):
         self.input_proj = nn.Conv2d(in_channels=backbone.num_channels,
                                     out_channels=hidden_dim,
                                     kernel_size=1)
-        self.loc_proj = nn.Linear(7, hidden_dim)
+        self.loc_proj = nn.Linear(1, hidden_dim)
         self.transformer = transformer
         self.mlp = MLP(hidden_dim, 512, vocab_size, 3)
 
@@ -113,13 +113,15 @@ class CaptionGlobalLoc(nn.Module):
         t_src = self.input_proj(t_src)
         assert t_mask is not None
         # flatten vectors
-        t_src = t_src.flatten(2)
-        t_mask = t_mask.flatten(1)
+        t_src = t_src.flatten(2)  # [b, hidden_dim, len]
+        t_mask = t_mask.flatten(1)  # [b, len]
 
         # location features
-        loc_src = self.loc_proj(loc_feats).unsqueeze(-1)
+        loc_src = loc_feats.unsqueeze(2) # [b, n_feats] -> [b, n_feats, 1]
+        loc_src = self.loc_proj(loc_src)  # [b, n_feats, hidden_dim]
+        loc_src = loc_src.permute(0,2,1)  # [b, hidden_dim, n_feats]
         loc_masks = torch.zeros(
-            (loc_feats.shape[0], 1)).bool().to(t_mask.device)
+            (loc_src.shape[0], loc_src.shape[2])).bool().to(t_mask.device)
 
         # concatenate target and location to target vector
         target_src = torch.concat([t_src, loc_src], 2)
@@ -135,8 +137,8 @@ class CaptionGlobalLoc(nn.Module):
         # ensure there are unmasked context values
         g_mask = ensure_unmasked_values(g_mask)
         # flatten vectors
-        g_src = g_src.flatten(2)
-        g_mask = g_mask.flatten(1)
+        g_src = g_src.flatten(2)  # [b, hidden_dim, len]
+        g_mask = g_mask.flatten(1)  # [b, len]
 
         hs, att = self.transformer(
             src_t=target_src, mask_t=target_mask, 

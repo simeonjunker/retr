@@ -78,7 +78,8 @@ def get_refcoco_df(path):
         instances = json.load(file)
         instances = pd.DataFrame(instances['annotations']).set_index('id')
 
-    filepath = os.path.join(path, 'refs(unc).p')
+    filename = 'refs(umd).p' if path.endswith('refcocog') else 'refs(unc).p'  # different file name for RefCOCOg
+    filepath = os.path.join(path, filename)
     captions = pd.read_pickle(filepath)
     captions = split_sentences(pd.DataFrame(captions))
 
@@ -197,6 +198,39 @@ def crop_image_to_bb(image, bb, return_context=False):
 def compute_position_features(image, bb):
     """
     compute position features of bounding box within image
+    5 features (all relative to image dimensions):
+        - x and y coordinates of bb corner points ((x1,y1) and (x2,y2))
+        - bb area
+    :input:
+        Image (PIL Image)
+        Bounding Box coordinates (list containing values for x, y, w, h)
+    :output:
+        numpy array containing the features computed
+    cf. https://github.com/clp-research/clp-vision/blob/master/ExtractFeats/extract.py
+    """
+
+    image = np.array(image)
+    # get image dimensions, split up list containing bb values
+    ih, iw, _ = image.shape
+    x, y, w, h = bb
+
+    # x and y coordinates for bb corners
+    # upper left
+    x1r = x / iw
+    y1r = y / ih
+    # lower right
+    x2r = (x + w) / iw
+    y2r = (y + h) / ih
+
+    # bb area
+    area = (w * h) / (iw * ih)
+
+    return torch.Tensor([x1r, y1r, x2r, y2r, area])
+
+
+def compute_7_position_features(image, bb):
+    """
+    compute position features of bounding box within image
     7 features (all relative to image dimensions):
         - x and y coordinates of bb corner points ((x1,y1) and (x2,y2))
         - bb area
@@ -207,7 +241,7 @@ def compute_position_features(image, bb):
         Bounding Box coordinates (list containing values for x, y, w, h)
     :output:
         numpy array containing the features computed
-    https://github.com/clp-research/clp-vision/blob/master/ExtractFeats/extract.py
+    cf. https://github.com/clp-research/clp-vision/blob/master/ExtractFeats/extract.py
     """
 
     image = np.array(image)
