@@ -30,10 +30,10 @@ def prepare_model(args, config):
     return model
 
 
-def setup_val_dataloader(config):
+def setup_val_dataloader(config, split='validation'):
     dataset_val = refcoco.build_dataset(
         config, 
-        mode="validation", 
+        mode=split, 
         return_unique=True)
     sampler_val = torch.utils.data.SequentialSampler(dataset_val)
     data_loader_val = DataLoader(
@@ -113,7 +113,7 @@ def main_val_set(args, config):
     # tokenizer
     tokenizer, _, _ = prepare_tokenizer()
 
-    data_loader = setup_val_dataloader(config)
+    data_loader = setup_val_dataloader(config, args.split)
 
     metrics, generated = eval_model(
         model, data_loader, tokenizer, config, print_samples=args.print_samples

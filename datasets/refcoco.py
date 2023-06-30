@@ -253,7 +253,7 @@ def build_dataset(config,
         raise NotImplementedError('input for transform parameter has to be "auto" or dict with transforms for "context" and "target"')
     
     if config.verbose:
-        print(f'Initialize Dataset with mode: {mode}', 
+        print(f'Initialize Dataset with mode: {partition}', 
             '\ntarget transformation:', target_transform, 
             '\ncontext transformation:', context_transform,
             f'\nentries: {len(data)}',
