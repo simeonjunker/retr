@@ -219,6 +219,9 @@ def build_dataset(config,
     assert mode in ['training', 'train', 'validation', 'val', 'testa', 'testb']
 
     # get refcoco data
+    if config.verbose:
+        print(f'using data from {config.prefix}')
+
     full_data, ids = get_refcoco_data(config.ref_dir)
 
     # select data partition
