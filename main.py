@@ -7,7 +7,7 @@ import sys
 import os
 
 from models import utils, caption
-from datasets import refcoco
+from data_utils import refcoco
 from configuration import Config
 from engine import train_one_epoch, evaluate, eval_model
 from train_utils.checkpoints import load_ckp, save_ckp, get_latest_checkpoint

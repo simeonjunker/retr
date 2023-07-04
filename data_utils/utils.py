@@ -84,7 +84,7 @@ def get_refcoco_df(path):
     captions = split_sentences(pd.DataFrame(captions))
 
     captions = pd.merge(captions,
-                        instances[['image_id', 'bbox']],
+                        instances[['image_id', 'bbox', 'category_id']],
                         left_on='ann_id',
                         right_on='id').set_index('sent_id')
 

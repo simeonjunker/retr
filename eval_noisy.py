@@ -2,7 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 import argparse
 from models import caption
-from datasets import refcoco
+from data_utils import refcoco
 from configuration import Config
 import os
 import json

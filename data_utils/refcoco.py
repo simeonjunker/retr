@@ -216,7 +216,7 @@ def build_dataset(config,
                   return_unique=False, 
                   return_tensor=True):
 
-    assert mode in ['training', 'train', 'validation', 'val', 'testa', 'testb']
+    assert mode in ['training', 'train', 'validation', 'val', 'testa', 'testb', 'test']
 
     # get refcoco data
     if config.verbose:
@@ -230,10 +230,12 @@ def build_dataset(config,
         partition = 'train'
     elif mode.lower() in ['validation', 'val']:
         partition = 'val'
-    elif mode.lower() == 'testa':
+    elif mode.lower() == 'testa':  # refcoco / refcoco+
         partition = 'testA'
-    elif mode.lower() == 'testb':
+    elif mode.lower() == 'testb':  # refcoco / refcoco+
         partition = 'testB'
+    elif mode.lower() == 'test':  # refcocog
+        partition = 'test'
     else:
         raise NotImplementedError(f"{mode} not supported")
     
