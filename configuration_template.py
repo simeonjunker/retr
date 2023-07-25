@@ -1,5 +1,10 @@
+from os.path import join
+
+
 class Config(object):
     def __init__(self):
+
+        self.prefix = 'refcoco'
 
         # Learning Rates
         self.lr_backbone = 1e-5
@@ -12,7 +17,7 @@ class Config(object):
         self.weight_decay = 1e-4
 
         # Backbone
-        self.backbone = 'resnet101'
+        self.backbone = 'ResNet101'
         self.position_embedding = 'sine'
         self.dilation = True
         
@@ -21,10 +26,17 @@ class Config(object):
         self.seed = 42
         self.batch_size = 32
         self.num_workers = 8
-        self.checkpoint = './checkpoint.pth'
+        self.checkpoint = f'./{self.prefix}_checkpoint.pth'
+        self.project_data_path = './data'
+        self.checkpoint_path = join(self.project_data_path, 'models', self.prefix)
         self.clip_max_norm = 0.1
+        self.early_stopping = True
+        self.use_global_features = False
+        self.use_location_features = False
+        self.verbose = True
 
         # Transformer
+        self.transformer_type = 'Concat'
         self.hidden_dim = 256
         self.pad_token_id = 0
         self.max_position_embeddings = 128
@@ -39,5 +51,7 @@ class Config(object):
         self.pre_norm = True
 
         # Dataset
-        self.dir = '../coco'
+        self.dir = 'PATH_TO_COCO'  # COCO base dir (images)
+        self.ref_base = 'PATH_TO_REF_BASE'  # RefCOCO* base dir (annotations)
+        self.ref_dir = join(self.ref_base, self.prefix)
         self.limit = -1
