@@ -37,11 +37,15 @@ class Caption(nn.Module):
         src = src.flatten(2)
         mask = mask.flatten(1)
 
-        hs = self.transformer(
+        hs, att = self.transformer(
             src_t=src, mask_t=mask, 
             src_c=None, mask_c=None, 
             tgt=target_exp, tgt_mask=target_exp_mask)
         out = self.mlp(hs.permute(1, 0, 2))
+        
+        if return_attention:
+            return out, att
+                
         return out
     
 
@@ -81,11 +85,15 @@ class CaptionLoc(nn.Module):
         src = torch.concat([t_src, loc_src], 2)
         mask = torch.concat([t_mask, loc_masks], 1)
 
-        hs = self.transformer(
+        hs, att = self.transformer(
             src_t=src, mask_t=mask, 
             src_c=None, mask_c=None, 
             tgt=target_exp, tgt_mask=target_exp_mask)
         out = self.mlp(hs.permute(1, 0, 2))
+        
+        if return_attention:
+            return out, att
+                
         return out
     
 

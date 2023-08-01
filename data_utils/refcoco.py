@@ -82,7 +82,8 @@ class RefCocoCaption(Dataset):
                        entry['caption'], entry['bbox']) for entry in data]
 
         # TODO remove this after testing!
-        self.annot = [a for a in self.annot if a[0] not in [599584, 1617100, 1903307, 1963185, 2191866, 2227390, 1616547, 1619639]]
+        if return_scene_features:
+            self.annot = [a for a in self.annot if a[0] not in [599584, 1617100, 1903307, 1963185, 2191866, 2227390, 1616547, 1619639]]
 
 
         self.return_global_context = return_global_context

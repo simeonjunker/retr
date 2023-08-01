@@ -29,29 +29,6 @@ def create_caption_and_mask(start_token, max_length, batch_size=1):
     return caption_template, mask_template
 
 
-def greedy_single(model, image, tokenizer, start_token, end_token, max_pos_embeddings):
-    """greedy decoding for a single image"""
-
-    caption, cap_mask = create_caption_and_mask(
-        start_token, max_pos_embeddings)
-
-    with torch.no_grad():
-        model.eval()
-
-        for i in range(max_pos_embeddings - 1):
-            predictions = model(image, caption, cap_mask)
-            predictions = predictions[:, i, :]
-            predicted_id = torch.argmax(predictions, axis=-1)
-
-            if predicted_id[0] == end_token:
-                break
-
-            caption[:, i+1] = predicted_id[0]
-            cap_mask[:, i+1] = False
-
-    return tokenizer.decode(caption[0], skip_special_tokens=True)
-
-
 def greedy(samples, model, max_len=20, device="auto", bos_token=1, eos_token=2):
     """greedy decoding for a batch of samples"""
 
