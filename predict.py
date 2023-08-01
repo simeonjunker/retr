@@ -5,7 +5,7 @@ from PIL import Image
 import argparse
 
 from models import caption
-from datasets import coco, utils
+from data_utils import coco, utils
 from configuration import Config
 from train_utils.checkpoints import get_latest_checkpoint
 import os

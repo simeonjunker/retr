@@ -1,6 +1,7 @@
 checkpoint.pth
 *configuration.py
 data/models/*/*
+data/scene_summaries/*.h5
 .vscode
 bash
 data/results
