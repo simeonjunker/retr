@@ -1,4 +1,4 @@
-from os.path import join
+from os.path import join, abspath
 
 
 class Config(object):
@@ -27,15 +27,18 @@ class Config(object):
         self.batch_size = 32
         self.num_workers = 8
         self.checkpoint = f'./{self.prefix}_checkpoint.pth'
-        self.checkpoint_path = f'./data/models/{self.prefix}'
+        self.project_data_path = './data'
+        self.checkpoint_path = join(self.project_data_path, 'models', self.prefix)
         self.clip_max_norm = 0.1
         self.resume_training = False
         self.early_stopping = True
         self.use_global_features = False
         self.use_location_features = False
+        self.use_scene_summaries = True
         self.verbose = True
 
         # Transformer
+        self.transformer_type = 'Concat'  # 'Concat', 'EncoderCrossAtt', 'DecoderCrossAtt'
         self.hidden_dim = 256
         self.pad_token_id = 0
         self.max_position_embeddings = 128

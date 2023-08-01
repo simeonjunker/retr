@@ -7,7 +7,7 @@ import sys
 import os
 
 from models import utils, caption
-from datasets import refcoco
+from data_utils import refcoco
 from configuration import Config
 from engine import train_one_epoch, evaluate, eval_model
 from train_utils.checkpoints import load_ckp, save_ckp, get_latest_checkpoint
@@ -70,7 +70,8 @@ def main(config):
     
     loc_used = '_loc' if config.use_location_features else ''
     glob_used = '_glob' if config.use_global_features else ''
-    cpt_template = f'{config.prefix}{loc_used}{glob_used}_checkpoint_#.pth'
+    scene_used = '_scene' if config.use_scene_summaries else ''
+    cpt_template = f'{config.transformer_type}_{config.prefix}{loc_used}{glob_used}{scene_used}_checkpoint_#.pth'
 
     if config.resume_training:
         # load latest checkpoint available
