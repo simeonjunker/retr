@@ -9,7 +9,7 @@ import os
 from models import utils, caption
 from data_utils import refcoco
 from configuration import Config
-from engine import train_one_epoch, evaluate, eval_model
+from engine import train_one_epoch, train_one_epoch_with_mmi, evaluate, evaluate_with_mmi, eval_model
 from train_utils.checkpoints import load_ckp, save_ckp, get_latest_checkpoint
 from eval_utils.decode import prepare_tokenizer
 
@@ -71,7 +71,8 @@ def main(config):
     loc_used = '_loc' if config.use_location_features else ''
     glob_used = '_glob' if config.use_global_features else ''
     scene_used = '_scene' if config.use_scene_summaries else ''
-    cpt_template = f'{config.transformer_type}_{config.prefix}{loc_used}{glob_used}{scene_used}_checkpoint_#.pth'
+    contrastive_training = f'_mmi{config.mmi_lambda}'.replace('.', '-') if config.contrastive_training else ''
+    cpt_template = f'{config.transformer_type}_{config.prefix}{loc_used}{glob_used}{scene_used}{contrastive_training}_checkpoint_#.pth'
 
     if config.resume_training:
         # load latest checkpoint available
@@ -90,13 +91,16 @@ def main(config):
     cider_scores = [0]
     for epoch in range(config.start_epoch, config.epochs):
         print(f"Epoch: {epoch}")
-        epoch_loss = train_one_epoch(
-            model, criterion, data_loader_train, optimizer, device, epoch, config.clip_max_norm)
-        lr_scheduler.step()
-        print(f"Training Loss: {epoch_loss}")
 
-        validation_loss = evaluate(model, criterion, data_loader_val, device)
-        print(f"Validation Loss: {validation_loss}")
+        mmi_lambda = config.mmi_lambda if epoch >= config.mmi_start_epoch else 0
+
+        train_ce_score, train_mmi_score, train_compound_score = train_one_epoch_with_mmi(
+            model, criterion, data_loader_train, optimizer, device, epoch, config.clip_max_norm, _lambda=mmi_lambda)
+        lr_scheduler.step()
+        print(f"Training Loss: CE {train_ce_score} / MMI {train_mmi_score} / Compound {train_compound_score}")
+
+        val_ce_score, val_mmi_score, val_compound_score = evaluate_with_mmi(model, criterion, data_loader_val, device, _lambda=mmi_lambda)
+        print(f"Validation Loss: CE {val_ce_score} / MMI {val_mmi_score} / Compound {val_compound_score}")
 
         eval_results, _ = eval_model(model, data_loader_cider, tokenizer, config)
         cider_score = eval_results['CIDEr']
@@ -105,13 +109,15 @@ def main(config):
         checkpoint_name = cpt_template.replace('#', str(epoch))
         save_ckp(
             epoch, model, optimizer, lr_scheduler, 
-            train_loss=epoch_loss, val_loss=validation_loss, cider_score=cider_score,
+            train_loss=(train_ce_score, train_mmi_score, train_compound_score), 
+            val_loss=(val_ce_score, val_mmi_score, val_compound_score), 
+            cider_score=cider_score,
             path=os.path.join(config.checkpoint_path, checkpoint_name)
         )
         
         if config.early_stopping:
-            if cider_score < min(cider_scores[-5:]):
-                print('no improvements within the last 5 epochs -- early stopping triggered!')
+            if cider_score < min(cider_scores[-10:]):
+                print('no improvements within the last 10 epochs -- early stopping triggered!')
                 break
 
         cider_scores.append(cider_score)

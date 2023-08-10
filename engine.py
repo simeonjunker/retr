@@ -11,6 +11,9 @@ from os.path import dirname, abspath, join
 from models.utils import NestedTensor
 from eval_utils.decode import greedy_decoding
 
+from train_utils.losses import mmi, mmi_mm, mmi_mm_with_ce
+import random
+
 file_path = dirname(abspath(__file__))
 module_path = join(file_path, 'nlgeval')
 sys.path.append(module_path)
@@ -57,6 +60,79 @@ def pack_encoder_inputs(encoder_input,
         
 
 
+def train_one_epoch_with_mmi(model, criterion, data_loader,
+                    optimizer, device, epoch, max_norm, mmi_criterion='mmi', _lambda=1):
+    model.train()
+    criterion.train()
+
+    epoch_ce_loss = 0.0
+    epoch_mmi_loss = 0.0
+    epoch_compound_loss = 0.0
+    total = len(data_loader)
+
+    global_features = data_loader.dataset.return_global_context
+    location_features = data_loader.dataset.return_location_features
+    scene_features = data_loader.dataset.return_scene_features
+
+    with tqdm.tqdm(total=total) as pbar:
+        for ann_ids, *encoder_input, negative_samples_encoder_inputs, caps, cap_masks in data_loader:
+            caps = caps.to(device)
+            cap_masks = cap_masks.to(device)
+
+            # target
+            pos_samples = pack_encoder_inputs(
+                encoder_input, global_features, location_features, scene_features, device)
+            pos_outputs = model(*pos_samples, caps[:, :-1], cap_masks[:, :-1])
+            
+            # negative sample
+            random.seed(42)
+            neg_inputs = random.choice(negative_samples_encoder_inputs)
+            neg_samples = pack_encoder_inputs(neg_inputs, global_features, location_features, scene_features, device)
+            neg_outputs = model(*neg_samples, caps[:, :-1], cap_masks[:, :-1])
+
+            # Cross-Entropy loss
+            ce_loss = criterion(pos_outputs.permute(0, 2, 1), caps[:, 1:])
+            ce_loss_value = ce_loss.item()
+            epoch_ce_loss += ce_loss_value
+
+            if not math.isfinite(ce_loss_value):
+                print(f'Loss is {ce_loss_value}, stopping training')
+                sys.exit(1)
+
+            # MMI loss
+            mmi_loss = mmi_mm(pos_outputs.permute(0, 2, 1), neg_outputs.permute(0, 2, 1), caps[:, 1:])
+            mmi_loss_value = mmi_loss.item()
+            epoch_mmi_loss += mmi_loss_value
+
+            if not math.isfinite(mmi_loss_value):
+                print(f'Loss is {mmi_loss_value}, stopping training')
+                sys.exit(1)
+
+            # compound Loss
+            compound_loss = ce_loss + _lambda * mmi_loss
+            compound_loss_value = compound_loss.item()
+            epoch_compound_loss += compound_loss_value
+
+            if not math.isfinite(compound_loss_value):
+                print(f'Loss is {compound_loss_value}, stopping training')
+                sys.exit(1)
+            
+            # backprop with compound loss
+            optimizer.zero_grad()
+            compound_loss.backward()
+            if max_norm > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+            optimizer.step()
+
+            pbar.update(1)
+
+    ce_score = epoch_ce_loss / total
+    mmi_score = epoch_mmi_loss / total
+    compound_score = epoch_compound_loss / total
+
+    return ce_score, mmi_score, compound_score
+
+
 def train_one_epoch(model, criterion, data_loader,
                     optimizer, device, epoch, max_norm):
     model.train()
@@ -70,7 +146,7 @@ def train_one_epoch(model, criterion, data_loader,
     scene_features = data_loader.dataset.return_scene_features
 
     with tqdm.tqdm(total=total) as pbar:
-        for ann_ids, *encoder_input, caps, cap_masks in data_loader:
+        for ann_ids, *encoder_input, _, caps, cap_masks in data_loader:
             samples = pack_encoder_inputs(
                 encoder_input, global_features, location_features, scene_features, device)
             caps = caps.to(device)
@@ -94,6 +170,65 @@ def train_one_epoch(model, criterion, data_loader,
             pbar.update(1)
 
     return epoch_loss / total
+
+
+@torch.no_grad()
+def evaluate_with_mmi(model, criterion, data_loader, device, _lambda=1):
+    model.eval()
+    criterion.eval()
+
+    total_ce_loss = 0.0
+    total_mmi_loss = 0.0
+    total_compound_loss = 0.0
+    total = len(data_loader)
+
+    global_features = data_loader.dataset.return_global_context
+    location_features = data_loader.dataset.return_location_features
+    scene_features = data_loader.dataset.return_scene_features
+
+    with tqdm.tqdm(total=total) as pbar:
+        for ann_ids, *encoder_input, negative_samples_encoder_inputs, caps, cap_masks in data_loader:
+
+            caps = caps.to(device)
+            cap_masks = cap_masks.to(device)
+
+            # target
+            pos_samples = pack_encoder_inputs(
+                encoder_input, global_features, location_features, scene_features, device)
+            pos_outputs = model(*pos_samples, caps[:, :-1], cap_masks[:, :-1])
+            
+            # negative sample
+            random.seed(42)
+            neg_inputs = random.choice(negative_samples_encoder_inputs)
+            neg_samples = pack_encoder_inputs(neg_inputs, global_features, location_features, scene_features, device)
+            neg_outputs = model(*neg_samples, caps[:, :-1], cap_masks[:, :-1])
+
+            samples = pack_encoder_inputs(
+                encoder_input, global_features, location_features, scene_features, device)
+
+            # Cross-Entropy loss
+            ce_loss = criterion(pos_outputs.permute(0, 2, 1), caps[:, 1:])
+            ce_loss_value = ce_loss.item()
+            total_ce_loss += ce_loss_value
+
+            # MMI loss
+            mmi_loss = mmi_mm(pos_outputs.permute(0, 2, 1), neg_outputs.permute(0, 2, 1), caps[:, 1:])
+            mmi_loss_value = mmi_loss.item()
+            total_mmi_loss += mmi_loss_value
+
+            # compound Loss
+            compound_loss = ce_loss + _lambda * mmi_loss
+            compound_loss_value = compound_loss.item()
+            total_compound_loss += compound_loss_value
+
+            pbar.update(1)
+
+    ce_score = total_ce_loss / total
+    mmi_score = total_mmi_loss / total
+    compound_score = total_compound_loss / total
+
+    return ce_score, mmi_score, compound_score
+
 
 @torch.no_grad()
 def evaluate(model, criterion, data_loader, device):
@@ -162,7 +297,7 @@ def eval_model(model, data_loader, tokenizer,
     scene_features = data_loader.dataset.return_scene_features
 
     # decode imgs in val set
-    for i, (ann_ids, *encoder_input, caps, cap_masks) in enumerate(tqdm.tqdm(data_loader)):
+    for i, (ann_ids, *encoder_input, _, caps, cap_masks) in enumerate(tqdm.tqdm(data_loader)):
 
         samples = pack_encoder_inputs(encoder_input, global_features, location_features, scene_features)
 

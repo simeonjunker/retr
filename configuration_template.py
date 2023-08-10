@@ -30,11 +30,17 @@ class Config(object):
         self.project_data_path = './data'
         self.checkpoint_path = join(self.project_data_path, 'models', self.prefix)
         self.clip_max_norm = 0.1
+        self.mmi_start_epoch = 0
+        self.mmi_lambda = 0.3
         self.resume_training = False
         self.early_stopping = True
-        self.use_global_features = False
-        self.use_location_features = False
-        self.use_scene_summaries = True
+        self.use_global_features = True
+        self.use_location_features = True
+        self.use_scene_summaries = False
+
+        self.contrastive_training = True
+        self.negative_samples_path = join(self.project_data_path, 'negative_samples')
+
         self.verbose = True
 
         # Transformer

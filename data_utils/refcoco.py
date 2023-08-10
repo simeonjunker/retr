@@ -6,6 +6,7 @@ import torchvision as tv
 
 from PIL import Image
 import numpy as np
+import json
 import random
 import os
 import h5py
@@ -71,7 +72,9 @@ class RefCocoCaption(Dataset):
                  return_tensor=True,
                  return_scene_features=False,
                  scene_summary_ids=None,
-                 scene_summary_features=None
+                 scene_summary_features=None,
+                 contrastive_training=False,
+                 negative_samples=None
                  ):
         super().__init__()
 
@@ -82,9 +85,8 @@ class RefCocoCaption(Dataset):
                        entry['caption'], entry['bbox']) for entry in data]
 
         # TODO remove this after testing!
-        if return_scene_features:
-            self.annot = [a for a in self.annot if a[0] not in [599584, 1617100, 1903307, 1963185, 2191866, 2227390, 1616547, 1619639]]
-
+        #if return_scene_features:
+        #    self.annot = [a for a in self.annot if a[0] not in [599584, 1617100, 1903307, 1963185, 2191866, 2227390, 1616547, 1619639]]
 
         self.return_global_context = return_global_context
         self.return_location_features = return_location_features
@@ -92,6 +94,8 @@ class RefCocoCaption(Dataset):
         self.return_scene_features = return_scene_features
         self.scene_summary_ids = scene_summary_ids
         self.scene_summary_features = scene_summary_features
+        self.contrastive_training = contrastive_training
+        self.negative_samples = negative_samples
 
         if return_unique:
             # filter for unique ids
@@ -139,9 +143,30 @@ class RefCocoCaption(Dataset):
 
         # IMAGE
 
-        # convert if necessary
         if image.mode != 'RGB':
             image = image.convert('RGB')
+
+        encoder_input = self.make_encoder_input(image, bb, ann_id)
+
+        # NEGATIVE SAMPLES
+
+        if self.contrastive_training:
+            ns_m = self.negative_samples['ann_ids'] == ann_id
+            ns_boxes = self.negative_samples['boxes'][ns_m].tolist()
+            ns_encoder_inputs = [
+                self.make_encoder_input(image, box, ann_id) for box in ns_boxes
+            ]
+            # TODO remove this if there are multiple proposals for all inputs
+            random.seed(42)
+            ns_encoder_inputs = [random.choice(ns_encoder_inputs)]
+
+        else:
+            ns_encoder_inputs = None
+
+        return ann_id, *encoder_input, ns_encoder_inputs, caption, cap_mask
+    
+    
+    def make_encoder_input(self, image, bb, ann_id):
 
         # crop to bounding box
         target_image, target_mask, context_image, context_mask = crop_image_to_bb(
@@ -208,7 +233,8 @@ class RefCocoCaption(Dataset):
                 self.scene_summary_features[selection_mask]).squeeze()
             encoder_input.append(scene_summary)
 
-        return ann_id, *encoder_input, caption, cap_mask
+        return encoder_input
+
 
 
 def build_dataset(config,
@@ -264,6 +290,25 @@ def build_dataset(config,
             '\ncontext transformation:', context_transform,
             f'\nentries: {len(data)}',
             '\nreturn unique:', return_unique, '\n')
+        
+    # handle negative samples if set in config
+
+    if config.contrastive_training:
+
+        npzfile = np.load(
+            os.path.join(config.negative_samples_path, 
+                         f'distractor_propositions_{config.prefix}_{partition}.npz')
+            )
+        negative_samples = {
+            'ann_ids': npzfile['ann_ids'],
+            'img_ids': npzfile['img_ids'],
+            'boxes': npzfile['propositions_boxes'],
+            # 'scores': npzfile['propositions_scores'],
+            # 'classes': npzfile['propositions_classes'],
+        }
+
+    else:
+        negative_samples = None
 
     # handle scene summaries if set in config
     if config.use_scene_summaries:
@@ -287,5 +332,8 @@ def build_dataset(config,
                              return_tensor=return_tensor, 
                              return_scene_features=config.use_scene_summaries,
                              scene_summary_ids=scenesum_ann_ids,
-                             scene_summary_features=scenesum_feats)
+                             scene_summary_features=scenesum_feats,
+                             contrastive_training=config.contrastive_training,
+                             negative_samples=negative_samples
+                             )
     return dataset
