@@ -6,7 +6,9 @@ import torch.nn.functional as F
 import torchvision
 from torch import nn
 from torchvision.models._utils import IntermediateLayerGetter
+import transformers
 from typing import Dict, List
+from math import sqrt
 
 from .utils import NestedTensor, is_main_process
 
@@ -51,7 +53,7 @@ class FrozenBatchNorm2d(torch.nn.Module):
         return x * scale + bias
 
 
-class BackboneBase(nn.Module):
+class ResNetBackboneBase(nn.Module):
 
     def __init__(self, backbone: nn.Module, train_backbone: bool, num_channels: int, return_interm_layers: bool):
         super().__init__()
@@ -75,9 +77,36 @@ class BackboneBase(nn.Module):
             mask = F.interpolate(m[None].float(), size=x.shape[-2:]).to(torch.bool)[0]
             out[name] = NestedTensor(x, mask)  # merge Resnet feats with mask
         return out
+    
 
+class CLIPBackboneBase(nn.Module):
 
-class Backbone(BackboneBase):
+    def __init__(self, backbone: transformers.models.clip.modeling_clip.CLIPVisionModel, 
+                 train_backbone: bool, num_channels: int):
+        super().__init__()
+        for name, parameter in backbone.named_parameters():
+            if not train_backbone:
+                parameter.requires_grad_(False)
+        self.body = IntermediateLayerGetter(backbone, return_layers={'vision_model': '0'})
+        self.num_channels = num_channels
+
+    def forward(self, tensor_list: NestedTensor):
+        xs = self.body(tensor_list.tensors)  # OrderedDict: LayerID -> tensor [b, channels, 19, 19]
+        out: Dict[str, NestedTensor] = {}
+        for name, x in xs.items():
+            x_hidden = x['last_hidden_state'][:, 1:, :]
+            n_batches, n_patches, dim = x_hidden.shape
+            dim_patches = int(sqrt(n_patches))
+            x_hidden = x_hidden.permute(0,2,1).reshape(n_batches, dim, dim_patches, dim_patches)
+            m = tensor_list.mask
+            assert m is not None
+            # interpolate mask to CLIP output shape
+            mask = F.interpolate(m[None].float(), size=x_hidden.shape[-2:]).to(torch.bool)[0]
+            out[name] = NestedTensor(x_hidden, mask)  # merge CLIP feats with mask
+        return out
+    
+
+class ResNetBackbone(ResNetBackboneBase):
     """ResNet backbone with frozen BatchNorm."""
     def __init__(self, name: str,
                  train_backbone: bool,
@@ -91,6 +120,16 @@ class Backbone(BackboneBase):
             weights=backbone_weights, norm_layer=FrozenBatchNorm2d)
         num_channels = 512 if name in ('ResNet18', 'ResNet34') else 2048
         super().__init__(backbone, train_backbone, num_channels, return_interm_layers)
+
+
+class CLIPBackbone(CLIPBackboneBase):
+    """ResNet backbone with frozen BatchNorm."""
+    def __init__(self, name: str,
+                 train_backbone: bool):
+        assert name in ['openai/clip-vit-base-patch32', 'openai/clip-vit-large-patch14']
+        backbone = transformers.CLIPVisionModel.from_pretrained(name)
+        num_channels = 768 if name == 'openai/clip-vit-base-patch32' else 1024
+        super().__init__(backbone, train_backbone, num_channels)
 
 
 class Joiner(nn.Sequential):
@@ -113,6 +152,9 @@ class Joiner(nn.Sequential):
 
 def build_backbone(config):
     train_backbone = config.lr_backbone > 0
-    return_interm_layers = False
-    backbone = Backbone(config.backbone, train_backbone, return_interm_layers, config.dilation)
+    if 'ResNet'.lower() in config.backbone.lower():
+        return_interm_layers = False
+        backbone = ResNetBackbone(config.backbone, train_backbone, return_interm_layers, config.dilation)
+    elif 'openai/clip' in config.backbone:
+        backbone = CLIPBackbone(config.backbone, train_backbone)
     return backbone

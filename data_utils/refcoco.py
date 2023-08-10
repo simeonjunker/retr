@@ -3,6 +3,7 @@ from torch.utils.data import Dataset
 import torchvision.transforms.functional as TF
 from torchvision.transforms import Lambda, ColorJitter, RandomHorizontalFlip, ToTensor, Resize, CenterCrop, ToTensor, Normalize, Compose
 import torchvision as tv
+from transformers import CLIPImageProcessor
 
 from PIL import Image
 import numpy as np
@@ -48,6 +49,14 @@ def get_transforms(mode, config):
     else:
         raise NotImplementedError(f'transforms mode {mode} is not implemented')
     
+    return {'resize': resize, 'transform': transform}
+
+def get_clip_transforms(config): 
+    image_processor = CLIPImageProcessor.from_pretrained(config.backbone)
+    resize = Resize(size=224)
+    transform = Compose([Lambda(
+        lambda x: image_processor(x, return_tensors='pt')['pixel_values'].squeeze(0)
+    )])
     return {'resize': resize, 'transform': transform}
 
 
@@ -269,11 +278,7 @@ def build_dataset(config,
     data = full_data.loc[ids['caption_ids'][partition]]
     
     # parse transform parameter
-    if transform == 'auto':
-        # set target and context transformation according to mode
-        transform = auto_transform(mode, config)
-        target_transform, context_transform = transform, transform
-    elif type(transform) == dict:
+    if type(transform) == dict:
         # for different transformation settings
         assert set(transform.keys()) == {'context', 'target'}
         for key in transform.keys():
@@ -281,6 +286,13 @@ def build_dataset(config,
                 transform[key] = auto_transform(mode, config)
         target_transform = transform['target']
         context_transform = transform['context']
+    elif 'openai/clip-vit' in config.backbone:
+        transform = get_clip_transforms(config)
+        target_transform, context_transform = transform, transform
+    elif transform == 'auto':
+        # set target and context transformation according to mode
+        transform = auto_transform(mode, config)
+        target_transform, context_transform = transform, transform
     else:
         raise NotImplementedError('input for transform parameter has to be "auto" or dict with transforms for "context" and "target"')
     
