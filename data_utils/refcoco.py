@@ -83,7 +83,8 @@ class RefCocoCaption(Dataset):
                  scene_summary_ids=None,
                  scene_summary_features=None,
                  contrastive_training=False,
-                 negative_samples=None
+                 negative_samples=None,
+                 skip_no_distractors=False
                  ):
         super().__init__()
 
@@ -116,6 +117,14 @@ class RefCocoCaption(Dataset):
                     stored_ids.append(a[0])
         else:
             self.annot_select = self.annot
+
+        if contrastive_training:
+            before = len(self.annot_select)
+            self.annot_select = [x for x in self.annot_select if x[0] in self.negative_samples['ann_ids']]
+            after = len(self.annot_select)
+            if not skip_no_distractors:
+                assert before == after, 'distractors detected for not all images'
+            print(f'reduced training data from {before} to {after} due to lacking distractors')
 
         self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased',
                                                        do_lower=True)
@@ -165,12 +174,8 @@ class RefCocoCaption(Dataset):
             ns_encoder_inputs = [
                 self.make_encoder_input(image, box, ann_id) for box in ns_boxes
             ]
-            # TODO remove this if there are multiple proposals for all inputs
-            random.seed(42)
-            ns_encoder_inputs = [random.choice(ns_encoder_inputs)]
-
         else:
-            ns_encoder_inputs = None
+            ns_encoder_inputs = []
 
         return ann_id, *encoder_input, ns_encoder_inputs, caption, cap_mask
     

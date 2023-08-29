@@ -5,6 +5,7 @@ import torch
 import torch.distributed as dist
 from torch import Tensor, nn
 import numpy as np
+from math import ceil
 
 def _max_by_axis(the_list):
     # type: (List[List[int]]) -> List[int]
@@ -56,7 +57,6 @@ def generate_square_subsequent_mask(sz):
         '-inf')).masked_fill(mask == 1, float(0.0))
     return mask
 
-
 def ensure_unmasked_values(mask, unmasked_ratio = 0.01):
     """
     if mask is entirely True (i.e. everything is completely masked out):
@@ -68,22 +68,17 @@ def ensure_unmasked_values(mask, unmasked_ratio = 0.01):
         unmasked_ratio (float, optional): Ratio of unmasked values. Defaults to 0.01.
     """
     
-    b, h, w = mask.shape
-    flatten_mask = mask.reshape((b, -1))
-
-    # check if all items contain unmasked values
-    dim_contains_unmasked = torch.any(flatten_mask == False, dim=1)
+    dim_contains_unmasked = torch.any(mask == False, dim=1)
     
     if False in dim_contains_unmasked:
-
-        filler_mask = torch.ones((h, w), dtype=bool, device=mask.device.type)  # create dummy mask filled with True
-        flatten_filler_mask = filler_mask.flatten()
-
-        flatten_pixel_idx = np.indices(flatten_filler_mask.shape).flatten()  # idx of flattened mask
-        idx_sample = np.random.choice(flatten_pixel_idx, replace=False, size=round(flatten_pixel_idx.size * unmasked_ratio))  # sample from flattened idx
-        flatten_filler_mask[idx_sample] = False  # set sample values to False (i.e. do not mask out)
         
-        filler_mask = flatten_filler_mask.reshape((h,w))  # reshape back to original format
+        b, l = mask.shape
+        filler_mask = torch.ones(l, dtype=bool, device=mask.device.type)  # create dummy mask filled with True
+
+        pixel_idx = np.indices(filler_mask.shape).flatten()  # idx of mask
+        idx_sample = np.random.choice(pixel_idx, replace=False, size=ceil(pixel_idx.size * unmasked_ratio))  # sample from flattened idx
+        filler_mask[idx_sample] = False  # set sample values to False (i.e. do not mask out)
+        
         mask[~dim_contains_unmasked] = filler_mask  # replace mask with only True values with filler mask
     
     return mask

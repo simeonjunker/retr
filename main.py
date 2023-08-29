@@ -71,8 +71,9 @@ def main(config):
     loc_used = '_loc' if config.use_location_features else ''
     glob_used = '_glob' if config.use_global_features else ''
     scene_used = '_scene' if config.use_scene_summaries else ''
+    encoder_used = '_CLIP' if 'clip' in config.backbone else '_ResNet'
     contrastive_training = f'_mmi{config.mmi_lambda}'.replace('.', '-') if config.contrastive_training else ''
-    cpt_template = f'{config.transformer_type}_{config.prefix}{loc_used}{glob_used}{scene_used}{contrastive_training}_checkpoint_#.pth'
+    cpt_template = f'{config.transformer_type}_{config.prefix}{loc_used}{glob_used}{scene_used}{encoder_used}{contrastive_training}_checkpoint_#.pth'
 
     if config.resume_training:
         # load latest checkpoint available
@@ -92,28 +93,52 @@ def main(config):
     for epoch in range(config.start_epoch, config.epochs):
         print(f"Epoch: {epoch}")
 
-        mmi_lambda = config.mmi_lambda if epoch >= config.mmi_start_epoch else 0
+        if config.contrastive_training:
+            mmi_lambda = config.mmi_lambda if epoch >= config.mmi_start_epoch else 0
 
-        train_ce_score, train_mmi_score, train_compound_score = train_one_epoch_with_mmi(
-            model, criterion, data_loader_train, optimizer, device, epoch, config.clip_max_norm, _lambda=mmi_lambda)
-        lr_scheduler.step()
-        print(f"Training Loss: CE {train_ce_score} / MMI {train_mmi_score} / Compound {train_compound_score}")
+            train_ce_score, train_mmi_score, train_compound_score = train_one_epoch_with_mmi(
+                model, criterion, data_loader_train, optimizer, device, epoch, config.clip_max_norm, 
+                mmi_criterion=config.mmi_criterion, _lambda=mmi_lambda, M=config.mmi_M)
+            lr_scheduler.step()
+            print(f"Training Loss: CE {train_ce_score} / MMI {train_mmi_score} / Compound {train_compound_score}")
 
-        val_ce_score, val_mmi_score, val_compound_score = evaluate_with_mmi(model, criterion, data_loader_val, device, _lambda=mmi_lambda)
-        print(f"Validation Loss: CE {val_ce_score} / MMI {val_mmi_score} / Compound {val_compound_score}")
+            val_ce_score, val_mmi_score, val_compound_score = evaluate_with_mmi(
+                model, criterion, data_loader_val, device, 
+                mmi_criterion=config.mmi_criterion, _lambda=mmi_lambda, M=config.mmi_M)
+            print(f"Validation Loss: CE {val_ce_score} / MMI {val_mmi_score} / Compound {val_compound_score}")
 
-        eval_results, _ = eval_model(model, data_loader_cider, tokenizer, config)
-        cider_score = eval_results['CIDEr']
-        print(f"CIDEr score: {cider_score}")
+            eval_results, _ = eval_model(model, data_loader_cider, tokenizer, config)
+            cider_score = eval_results['CIDEr']
+            print(f"CIDEr score: {cider_score}")
 
-        checkpoint_name = cpt_template.replace('#', str(epoch))
-        save_ckp(
-            epoch, model, optimizer, lr_scheduler, 
-            train_loss=(train_ce_score, train_mmi_score, train_compound_score), 
-            val_loss=(val_ce_score, val_mmi_score, val_compound_score), 
-            cider_score=cider_score,
-            path=os.path.join(config.checkpoint_path, checkpoint_name)
-        )
+            checkpoint_name = cpt_template.replace('#', str(epoch))
+            save_ckp(
+                epoch, model, optimizer, lr_scheduler, 
+                train_loss=(train_ce_score, train_mmi_score, train_compound_score), 
+                val_loss=(val_ce_score, val_mmi_score, val_compound_score), 
+                cider_score=cider_score,
+                path=os.path.join(config.checkpoint_path, checkpoint_name)
+            )
+
+        else:
+            epoch_loss = train_one_epoch(
+                model, criterion, data_loader_train, optimizer, device, epoch, config.clip_max_norm)
+            lr_scheduler.step()
+            print(f"Training Loss: {epoch_loss}")
+
+            validation_loss = evaluate(model, criterion, data_loader_val, device)
+            print(f"Validation Loss: {validation_loss}")
+
+            eval_results, _ = eval_model(model, data_loader_cider, tokenizer, config)
+            cider_score = eval_results['CIDEr']
+            print(f"CIDEr score: {cider_score}")
+
+            checkpoint_name = cpt_template.replace('#', str(epoch))
+            save_ckp(
+                epoch, model, optimizer, lr_scheduler, 
+                train_loss=epoch_loss, val_loss=validation_loss, cider_score=cider_score,
+                path=os.path.join(config.checkpoint_path, checkpoint_name)
+            )
         
         if config.early_stopping:
             if cider_score < min(cider_scores[-10:]):

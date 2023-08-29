@@ -104,7 +104,7 @@ class CaptionGlobalLoc(nn.Module):
         super().__init__()
         self.backbone = backbone
         self.positional_encoding = positional_encoding
-        self.input_proj = nn.Conv2d(in_channels=backbone.num_channels,
+        self.input_proj = nn.Conv1d(in_channels=backbone.num_channels,
                                     out_channels=hidden_dim,
                                     kernel_size=1)
         self.loc_proj = nn.Linear(1, hidden_dim)
@@ -114,15 +114,10 @@ class CaptionGlobalLoc(nn.Module):
     def forward(self, t_samples, g_samples, loc_feats, target_exp, target_exp_mask, return_attention=False):
 
         # target features
-        if not isinstance(t_samples, NestedTensor):
-            t_samples = nested_tensor_from_tensor_list(t_samples)
         t_features = self.backbone(t_samples)['0']
         t_src, t_mask = t_features.decompose()
         t_src = self.input_proj(t_src)
         assert t_mask is not None
-        # flatten vectors
-        t_src = t_src.flatten(2)  # [b, hidden_dim, len]
-        t_mask = t_mask.flatten(1)  # [b, len]
 
         # location features
         loc_src = loc_feats.unsqueeze(2) # [b, n_feats] -> [b, n_feats, 1]
@@ -136,17 +131,12 @@ class CaptionGlobalLoc(nn.Module):
         target_mask = torch.concat([t_mask, loc_masks], 1)
 
         # global features
-        if not isinstance(g_samples, NestedTensor):
-            g_samples = nested_tensor_from_tensor_list(g_samples)
         g_features = self.backbone(g_samples)['0']
         g_src, g_mask = g_features.decompose()
         g_src = self.input_proj(g_src)
         assert g_mask is not None
         # ensure there are unmasked context values
         g_mask = ensure_unmasked_values(g_mask)
-        # flatten vectors
-        g_src = g_src.flatten(2)  # [b, hidden_dim, len]
-        g_mask = g_mask.flatten(1)  # [b, len]
 
         hs, att = self.transformer(
             src_t=target_src, mask_t=target_mask, 

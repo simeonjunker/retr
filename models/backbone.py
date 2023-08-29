@@ -71,10 +71,16 @@ class ResNetBackboneBase(nn.Module):
         xs = self.body(tensor_list.tensors)  # OrderedDict: LayerID -> tensor [b, channels, 19, 19]
         out: Dict[str, NestedTensor] = {}
         for name, x in xs.items():
+            n_batches, dim, _, _ = x.shape
             m = tensor_list.mask
             assert m is not None
             # interpolate mask to ResNet output shape
             mask = F.interpolate(m[None].float(), size=x.shape[-2:]).to(torch.bool)[0]
+
+            # flatten features and mask
+            x = x.reshape(n_batches, dim, -1)
+            mask = mask.reshape(n_batches, -1)
+
             out[name] = NestedTensor(x, mask)  # merge Resnet feats with mask
         return out
     
@@ -94,14 +100,28 @@ class CLIPBackboneBase(nn.Module):
         xs = self.body(tensor_list.tensors)  # OrderedDict: LayerID -> tensor [b, channels, 19, 19]
         out: Dict[str, NestedTensor] = {}
         for name, x in xs.items():
-            x_hidden = x['last_hidden_state'][:, 1:, :]
-            n_batches, n_patches, dim = x_hidden.shape
+
+            # patches
+            x_hidden_patches = x['last_hidden_state'][:, 1:, :]
+            n_batches, n_patches, dim = x_hidden_patches.shape
             dim_patches = int(sqrt(n_patches))
-            x_hidden = x_hidden.permute(0,2,1).reshape(n_batches, dim, dim_patches, dim_patches)
+            x_hidden_patches = x_hidden_patches.permute(0,2,1).reshape(n_batches, dim, dim_patches, dim_patches)
             m = tensor_list.mask
             assert m is not None
             # interpolate mask to CLIP output shape
-            mask = F.interpolate(m[None].float(), size=x_hidden.shape[-2:]).to(torch.bool)[0]
+            patches_mask = F.interpolate(m[None].float(), size=x_hidden_patches.shape[-2:]).to(torch.bool)[0]
+            # flatten features and mask
+            x_hidden_patches = x_hidden_patches.reshape(n_batches, dim, -1)
+            patches_mask = patches_mask.reshape(n_batches, -1)
+
+            # cls token
+            x_hidden_cls = x['last_hidden_state'][:, :1, :].permute(0,2,1)
+            cls_mask = torch.zeros((n_batches, 1), device=patches_mask.device).bool()  # True by default
+
+            # merge cls token and patches
+            x_hidden = torch.concat([x_hidden_cls, x_hidden_patches], -1)
+            mask = torch.concat([cls_mask, patches_mask], -1)
+
             out[name] = NestedTensor(x_hidden, mask)  # merge CLIP feats with mask
         return out
     

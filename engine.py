@@ -61,7 +61,10 @@ def pack_encoder_inputs(encoder_input,
 
 
 def train_one_epoch_with_mmi(model, criterion, data_loader,
-                    optimizer, device, epoch, max_norm, mmi_criterion='mmi', _lambda=1):
+                    optimizer, device, epoch, max_norm, mmi_criterion='mmi_mm', _lambda=1, M=0):
+    
+    assert mmi_criterion in ['mmi_mm', 'mmi']
+    
     model.train()
     criterion.train()
 
@@ -85,10 +88,21 @@ def train_one_epoch_with_mmi(model, criterion, data_loader,
             pos_outputs = model(*pos_samples, caps[:, :-1], cap_masks[:, :-1])
             
             # negative sample
-            random.seed(42)
-            neg_inputs = random.choice(negative_samples_encoder_inputs)
-            neg_samples = pack_encoder_inputs(neg_inputs, global_features, location_features, scene_features, device)
-            neg_outputs = model(*neg_samples, caps[:, :-1], cap_masks[:, :-1])
+            if mmi_criterion == 'mmi_mm':
+                # single negative
+                random.seed(42)
+                neg_inputs = random.choice(negative_samples_encoder_inputs)
+                neg_samples = pack_encoder_inputs(neg_inputs, global_features, location_features, scene_features, device)
+                neg_outputs = model(*neg_samples, caps[:, :-1], cap_masks[:, :-1])
+            elif mmi_criterion == 'mmi':
+                # multiple negatives
+                neg_samples_list = [
+                    pack_encoder_inputs(neg_input, global_features, location_features, scene_features, device) 
+                    for neg_input in negative_samples_encoder_inputs]
+                neg_outputs_list = [
+                    model(*neg_sample, caps[:, :-1], cap_masks[:, :-1])
+                    for neg_sample in neg_samples_list
+                ]
 
             # Cross-Entropy loss
             ce_loss = criterion(pos_outputs.permute(0, 2, 1), caps[:, 1:])
@@ -100,7 +114,20 @@ def train_one_epoch_with_mmi(model, criterion, data_loader,
                 sys.exit(1)
 
             # MMI loss
-            mmi_loss = mmi_mm(pos_outputs.permute(0, 2, 1), neg_outputs.permute(0, 2, 1), caps[:, 1:])
+            if mmi_criterion == 'mmi_mm':
+                mmi_loss = mmi_mm(
+                    pos_outputs.permute(0, 2, 1), 
+                    neg_outputs.permute(0, 2, 1), 
+                    caps[:, 1:], 
+                    M=M
+                )
+            elif mmi_criterion == 'mmi':
+                # TODO: Returns NaN!
+                mmi_loss = mmi(
+                    pos_outputs.permute(0, 2, 1), 
+                    [neg_output.permute(0, 2, 1) for neg_output in neg_outputs_list],
+                    caps[:, 1:]
+                )
             mmi_loss_value = mmi_loss.item()
             epoch_mmi_loss += mmi_loss_value
 
@@ -173,7 +200,10 @@ def train_one_epoch(model, criterion, data_loader,
 
 
 @torch.no_grad()
-def evaluate_with_mmi(model, criterion, data_loader, device, _lambda=1):
+def evaluate_with_mmi(model, criterion, data_loader, device, mmi_criterion='mmi_mm', _lambda=1, M=0):
+
+    assert mmi_criterion in ['mmi_mm', 'mmi']
+
     model.eval()
     criterion.eval()
 
@@ -198,13 +228,21 @@ def evaluate_with_mmi(model, criterion, data_loader, device, _lambda=1):
             pos_outputs = model(*pos_samples, caps[:, :-1], cap_masks[:, :-1])
             
             # negative sample
-            random.seed(42)
-            neg_inputs = random.choice(negative_samples_encoder_inputs)
-            neg_samples = pack_encoder_inputs(neg_inputs, global_features, location_features, scene_features, device)
-            neg_outputs = model(*neg_samples, caps[:, :-1], cap_masks[:, :-1])
-
-            samples = pack_encoder_inputs(
-                encoder_input, global_features, location_features, scene_features, device)
+            if mmi_criterion == 'mmi_mm':
+                # single negative
+                random.seed(42)
+                neg_inputs = random.choice(negative_samples_encoder_inputs)
+                neg_samples = pack_encoder_inputs(neg_inputs, global_features, location_features, scene_features, device)
+                neg_outputs = model(*neg_samples, caps[:, :-1], cap_masks[:, :-1])
+            elif mmi_criterion == 'mmi':
+                # multiple negatives
+                neg_samples_list = [
+                    pack_encoder_inputs(neg_input, global_features, location_features, scene_features, device) 
+                    for neg_input in negative_samples_encoder_inputs]
+                neg_outputs_list = [
+                    model(*neg_sample, caps[:, :-1], cap_masks[:, :-1])
+                    for neg_sample in neg_samples_list
+                ]
 
             # Cross-Entropy loss
             ce_loss = criterion(pos_outputs.permute(0, 2, 1), caps[:, 1:])
@@ -212,7 +250,19 @@ def evaluate_with_mmi(model, criterion, data_loader, device, _lambda=1):
             total_ce_loss += ce_loss_value
 
             # MMI loss
-            mmi_loss = mmi_mm(pos_outputs.permute(0, 2, 1), neg_outputs.permute(0, 2, 1), caps[:, 1:])
+            if mmi_criterion == 'mmi_mm':
+                mmi_loss = mmi_mm(
+                    pos_outputs.permute(0, 2, 1), 
+                    neg_outputs.permute(0, 2, 1), 
+                    caps[:, 1:], 
+                    M=M
+                )
+            elif mmi_criterion == 'mmi':
+                mmi_loss = mmi(
+                    pos_outputs.permute(0, 2, 1), 
+                    [neg_output.permute(0, 2, 1) for neg_output in neg_outputs_list],
+                    caps[:, 1:]
+                )
             mmi_loss_value = mmi_loss.item()
             total_mmi_loss += mmi_loss_value
 
@@ -243,7 +293,7 @@ def evaluate(model, criterion, data_loader, device):
     scene_features = data_loader.dataset.return_scene_features
 
     with tqdm.tqdm(total=total) as pbar:
-        for ann_ids, *encoder_input, caps, cap_masks in data_loader:
+        for ann_ids, *encoder_input, _, caps, cap_masks in data_loader:
             samples = pack_encoder_inputs(
                 encoder_input, global_features, location_features, scene_features, device)
             caps = caps.to(device)

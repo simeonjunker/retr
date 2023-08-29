@@ -31,7 +31,9 @@ class Config(object):
         self.checkpoint_path = join(self.project_data_path, 'models', self.prefix)
         self.clip_max_norm = 0.1
         self.mmi_start_epoch = 0
+        self.mmi_criterion = 'mmi_mm'
         self.mmi_lambda = 0.3
+        self.mmi_M = 0
         self.resume_training = False
         self.early_stopping = True
         self.use_global_features = True
