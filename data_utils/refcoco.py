@@ -1,5 +1,6 @@
+import torch
 from torch.utils.data import Dataset
-from torchvision.transforms import ColorJitter, ToTensor, Resize, ToTensor, Normalize, Compose
+from torchvision.transforms import ColorJitter, ToTensor, Resize, ToTensor, ToPILImage, Normalize, Compose
 import torchvision as tv
 
 from PIL import Image
@@ -11,7 +12,33 @@ from transformers import BertTokenizer
 from .utils import crop_image_to_bb, get_refcoco_data, compute_position_features, pad_img_to_max, pad_mask_to_max
 
 
-def get_transforms(mode, config):
+class CoverWithNoise:
+    
+    def __init__(self, noise_coverage=0.5):
+        self.noise_coverage = noise_coverage
+        
+    def __call__(self, image):
+        image_tensor = ToTensor()(image)
+        # create 1D selection mask
+        _, h, w = image_tensor.shape
+        mask = np.zeros((h, w), dtype=bool).flatten()  # [hw]
+
+        # sample from flattened index & set mask to True
+        idx = np.indices(mask.shape).flatten()
+        idx_sample = np.random.choice(idx, replace=False, size=round(mask.size * self.noise_coverage))
+        mask[idx_sample] = True
+        # reshape to 2D image shape
+        mask = torch.from_numpy(mask.reshape((h, w)))  # [h, w]
+
+        # mask image with noise
+        noise_tensor = torch.rand_like(image_tensor)
+        image_tensor[:, mask] = noise_tensor[:, mask]
+
+        return ToPILImage()(image_tensor)
+
+
+def get_transforms(mode, config, noise_coverage):
+    
     # get default transformations for pretrained model
     model_weights = getattr(tv.models, config.backbone + '_Weights')
     default_transforms = model_weights.DEFAULT.transforms()
@@ -23,34 +50,36 @@ def get_transforms(mode, config):
         size=default_transforms.crop_size,
         interpolation=default_transforms.interpolation
     )
-
-    if mode == 'train': 
-        transform = Compose([
-            ColorJitter(brightness=[0.5, 1.3],
-                        contrast=[0.8, 1.5],
-                        saturation=[0.2, 1.5]),
-            ToTensor(),
-            Normalize(mean=default_transforms.mean, 
-                      std=default_transforms.std),
-        ])
-        
-    elif mode == 'val':
-        transform = Compose([
-            ToTensor(),
-            Normalize(mean=default_transforms.mean, 
-                      std=default_transforms.std),
-        ])
-    else:
-        raise NotImplementedError(f'transforms mode {mode} is not implemented')
+    
+    transformations = [
+        # add ColorJitter for train mode
+        ColorJitter(brightness=[0.5, 1.3],
+                    contrast=[0.8, 1.5],
+                    saturation=[0.2, 1.5])
+        ] if mode == 'train' else []
+    
+    if noise_coverage > 0:
+        transformations += [
+            CoverWithNoise(noise_coverage=noise_coverage)
+        ]
+    
+    transformations += [
+        # add remaining transformations
+        ToTensor(),
+        Normalize(mean=default_transforms.mean,
+                  std=default_transforms.std)
+    ]
+    
+    transform = Compose(transformations)
     
     return {'resize': resize, 'transform': transform}
 
 
-def auto_transform(mode, config):
+def auto_transform(mode, config, noise_coverage):
     if mode.lower() in ['training', 'train']: 
-        return get_transforms('train', config)
+        return get_transforms('train', config, noise_coverage)
     else:
-        return get_transforms('val', config)
+        return get_transforms('val', config, noise_coverage)
 
 
 class RefCocoCaption(Dataset):
@@ -190,9 +219,9 @@ class RefCocoCaption(Dataset):
 
 def build_dataset(config,
                   mode='training',
-                  transform='auto',
                   return_unique=False, 
-                  return_tensor=True):
+                  return_tensor=True,
+                  noise_coverage=0):
 
     assert mode in ['training', 'train', 'validation', 'val', 'testa', 'testb', 'test']
 
@@ -219,21 +248,9 @@ def build_dataset(config,
     
     data = full_data.loc[ids['caption_ids'][partition]]
     
-    # parse transform parameter
-    if transform == 'auto':
-        # set target and context transformation according to mode
-        transform = auto_transform(mode, config)
-        target_transform, context_transform = transform, transform
-    elif type(transform) == dict:
-        # for different transformation settings
-        assert set(transform.keys()) == {'context', 'target'}
-        for key in transform.keys():
-            if transform[key] == 'auto':
-                transform[key] = auto_transform(mode, config)
-        target_transform = transform['target']
-        context_transform = transform['context']
-    else:
-        raise NotImplementedError('input for transform parameter has to be "auto" or dict with transforms for "context" and "target"')
+    # set target and context transformation according to mode
+    target_transform = auto_transform(mode, config, noise_coverage)
+    context_transform = auto_transform(mode, config, 0)  # no noise for context
     
     if config.verbose:
         print(f'Initialize Dataset with mode: {partition}', 

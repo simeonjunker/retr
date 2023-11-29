@@ -57,7 +57,7 @@ class CaptionLoc(nn.Module):
         self.input_proj = nn.Conv2d(in_channels=backbone.num_channels,
                                     out_channels=hidden_dim,
                                     kernel_size=1)
-        self.loc_proj = nn.Linear(7, hidden_dim)
+        self.loc_proj = nn.Linear(5, hidden_dim)
         self.transformer = transformer
         self.mlp = MLP(hidden_dim, 512, vocab_size, 3)
 

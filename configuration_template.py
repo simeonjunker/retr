@@ -23,6 +23,7 @@ class Config(object):
         
         # Basic
         self.device = 'cuda'
+        self.save_every = 'max'
         self.seed = 42
         self.batch_size = 32
         self.num_workers = 8
@@ -31,6 +32,7 @@ class Config(object):
         self.checkpoint_path = join(self.project_data_path, 'models', self.prefix)
         self.clip_max_norm = 0.1
         self.early_stopping = True
+        self.stop_after_epochs = 5
         self.use_global_features = False
         self.use_location_features = False
         self.verbose = True

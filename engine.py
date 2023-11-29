@@ -61,7 +61,7 @@ def train_one_epoch(model, criterion, data_loader,
     location_features = data_loader.dataset.return_location_features
 
     with tqdm.tqdm(total=total) as pbar:
-        for ann_ids, *encoder_input, caps, cap_masks in data_loader:
+        for i, (ann_ids, *encoder_input, caps, cap_masks) in enumerate(data_loader):          
             samples = pack_encoder_inputs(
                 encoder_input, global_features, location_features, device)
             caps = caps.to(device)
@@ -98,7 +98,7 @@ def evaluate(model, criterion, data_loader, device):
     location_features = data_loader.dataset.return_location_features
 
     with tqdm.tqdm(total=total) as pbar:
-        for ann_ids, *encoder_input, caps, cap_masks in data_loader:
+        for i, (ann_ids, *encoder_input, caps, cap_masks) in enumerate(data_loader):         
             samples = pack_encoder_inputs(
                 encoder_input, global_features, location_features, device)
             caps = caps.to(device)
@@ -152,7 +152,6 @@ def eval_model(model, data_loader, tokenizer,
 
     # decode imgs in val set
     for i, (ann_ids, *encoder_input, caps, cap_masks) in enumerate(tqdm.tqdm(data_loader)):
-
         samples = pack_encoder_inputs(encoder_input, global_features, location_features)
 
         # get model predictions

@@ -3,6 +3,9 @@ from torch.utils.data import DataLoader
 
 import numpy as np
 import os
+import logging
+import json
+import argparse
 
 from models import utils, caption
 from data_utils import refcoco
@@ -10,9 +13,10 @@ from configuration import Config
 from engine import train_one_epoch, evaluate, eval_model
 from train_utils.checkpoints import save_ckp
 from eval_utils.decode import prepare_tokenizer
+from train_utils.early_stopping import ScoreTracker
 
 
-def main(config):
+def main(args, config):
     device = torch.device(config.device)
     print(f'Initializing Device: {device}')
 
@@ -38,12 +42,15 @@ def main(config):
     optimizer = torch.optim.AdamW(
         param_dicts, lr=config.lr, weight_decay=config.weight_decay)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, config.lr_drop)
+    score_tracker = ScoreTracker(config.stop_after_epochs)
     tokenizer, _, _ = prepare_tokenizer()
 
-    dataset_train = refcoco.build_dataset(config, mode='training')
-    dataset_val = refcoco.build_dataset(config, mode='validation')
+    dataset_train = refcoco.build_dataset(
+        config, mode='training', noise_coverage=args.target_noise)
+    dataset_val = refcoco.build_dataset(
+        config, mode='validation', noise_coverage=args.target_noise)
     dataset_cider = refcoco.build_dataset(
-        config, mode='validation', return_unique=True)
+        config, mode='validation', return_unique=True, noise_coverage=args.target_noise)
     print(f"Train: {len(dataset_train)}")
     print(f"Valid: {len(dataset_val)}")
     print(f"CIDEr evaluation: {len(dataset_cider)}")
@@ -65,44 +72,79 @@ def main(config):
 
     if not os.path.exists(config.checkpoint_path):
         os.mkdir(config.checkpoint_path)
-    
+           
     loc_used = '_loc' if config.use_location_features else ''
     glob_used = '_glob' if config.use_global_features else ''
-    cpt_template = f'{config.transformer_type}_{config.prefix}{loc_used}{glob_used}_checkpoint_#.pth'
+    model_name = f'{config.transformer_type}_{config.prefix}{loc_used}{glob_used}_noise{str(args.target_noise).replace(".", "-")}'
+
+    log_path = os.path.join(config.checkpoint_path, 'train_progress_' + model_name + '.log')
+    logging.basicConfig(
+        filename=log_path, 
+        level=logging.DEBUG
+    )
 
     print("Start Training..")
-    cider_scores = [0]
     for epoch in range(config.start_epoch, config.epochs):
         print(f"Epoch: {epoch}")
         epoch_loss = train_one_epoch(
             model, criterion, data_loader_train, optimizer, device, epoch, config.clip_max_norm)
         lr_scheduler.step()
         print(f"Training Loss: {epoch_loss}")
+        logging.info(f'Train loss / epoch {epoch}: {epoch_loss}')
 
         validation_loss = evaluate(model, criterion, data_loader_val, device)
         print(f"Validation Loss: {validation_loss}")
+        logging.info(f'Val loss / epoch {epoch}: {validation_loss}')
 
-        eval_results, _ = eval_model(model, data_loader_cider, tokenizer, config)
+        eval_results, ids_hypotheses = eval_model(model, data_loader_cider, tokenizer, config)
         cider_score = eval_results['CIDEr']
         print(f"CIDEr score: {cider_score}")
-
-        checkpoint_name = cpt_template.replace('#', str(epoch))
-        save_ckp(
-            epoch, model, optimizer, lr_scheduler, 
-            train_loss=epoch_loss, val_loss=validation_loss, cider_score=cider_score,
-            path=os.path.join(config.checkpoint_path, checkpoint_name)
-        )
+        logging.info(f'CIDEr score / epoch {epoch}: {cider_score}')
         
-        if config.early_stopping:
-            if cider_score < min(cider_scores[-5:]):
-                print('no improvements within the last 5 epochs -- early stopping triggered!')
-                break
+        if args.save_samples:
+            sample_name = f"{model_name}-{epoch:03d}-samples.json"
+            with open(
+                os.path.join(config.checkpoint_path, sample_name),
+                "w",
+            ) as f:
+                json.dump(ids_hypotheses, f)
 
-        cider_scores.append(cider_score)
+        # early stopping / export model weights based on CIDEr score
+        score_tracker(cider_score)
+        score_tracker.print_summary()
+        
+        if isinstance(config.save_every, int):
+            save_model = (epoch % config.save_every == 0 or epoch == config.epochs - 1)
+        else:
+            save_model = score_tracker.counter == 0
+            if not save_model:
+                print('non maximum score -- do not save model weights')
+
+        if save_model:
+            checkpoint_name = model_name + f'_checkpoint_{epoch:03d}.pth'
+            print(f'save model weights to {checkpoint_name}')
+            save_ckp(
+                epoch, model, optimizer, lr_scheduler, args, config,
+                train_loss=epoch_loss, val_loss=validation_loss, cider_score=cider_score,
+                path=os.path.join(config.checkpoint_path, checkpoint_name)
+            )
+        
+        if score_tracker.stop():
+            break
 
         print()
 
 
 if __name__ == "__main__":
     config = Config()
-    main(config)
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--target_noise", default=0.0, type=float)
+    parser.add_argument("--no_context", action="store_true")
+    parser.add_argument("--save_samples", action="store_true")
+    args = parser.parse_args()
+    
+    # align config.use_global_features with args.no_context
+    config.use_global_features = False if args.no_context else True
+    
+    main(args, config)
