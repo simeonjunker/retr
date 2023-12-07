@@ -17,6 +17,9 @@ class CoverWithNoise:
     def __init__(self, noise_coverage=0.5):
         self.noise_coverage = noise_coverage
         
+    def __str__(self):
+        return f"CoverWithNoise(noise_coverage={self.noise_coverage})"
+        
     def __call__(self, image):
         image_tensor = ToTensor()(image)
         # create 1D selection mask
