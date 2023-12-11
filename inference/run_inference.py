@@ -30,11 +30,24 @@ if __name__ == "__main__":
     if args.device == "auto":
         args.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    config = Config()
+    local_config = Config()
+
+    checkpoint_data = torch.load(args.checkpoint, map_location="cpu")
+    if 'config' in checkpoint_data.keys():
+        print('using config from checkpoint')
+        config = checkpoint_data['config']
+        config.dir = local_config.dir
+        config.ref_base = local_config.ref_base
+        config.ref_dir = local_config.ref_dir
+    else:
+        print('using local config')
+        config = local_config
+        if args.override_config:
+            override_config_with_checkpoint(split(args.checkpoint)[-1], config)
+
     config.batch_size = 1  # override batch size
 
-    if args.override_config:
-        override_config_with_checkpoint(split(args.checkpoint)[-1], config)
+    print(vars(config))
 
     # decode dataset
     print(args)

@@ -3,13 +3,13 @@ from torch.utils.data import Dataset
 from torchvision.transforms import ColorJitter, ToTensor, Resize, ToTensor, ToPILImage, Normalize, Compose
 import torchvision as tv
 
-from PIL import Image
+from PIL import Image, ImageDraw
 import numpy as np
 import os
 
 from transformers import BertTokenizer
 
-from .utils import crop_image_to_bb, get_refcoco_data, compute_position_features, pad_img_to_max, pad_mask_to_max
+from .utils import crop_image_to_bb, get_refcoco_data, compute_position_features, pad_img_to_max, pad_mask_to_max, xywh_to_xyxy
 
 
 class CoverWithNoise:
@@ -126,13 +126,44 @@ class RefCocoCaption(Dataset):
                                                        do_lower=True)
         self.max_length = max_length + 1
 
-
     def _process(self, image_id):
         val = str(image_id).zfill(12)
         return 'COCO_train2014_' + val + '.jpg'
 
     def __len__(self):
         return len(self.annot_select)
+
+    
+    def get_imgs_from_ann_id(self, ann_id):
+        annot_dict = dict([(a[0], a[1:]) for a in self.annot_select])
+        image_file, caption, bb = annot_dict[ann_id]
+
+        image_filepath = os.path.join(self.root, 'train2014', image_file)
+        assert os.path.isfile(image_filepath)
+        image = Image.open(image_filepath)
+        
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+
+        target_image, _, context_image, _ = crop_image_to_bb( # type: ignore
+            image, bb, return_context=True)
+        
+        return image, target_image, context_image, caption
+    
+    def get_bbox_from_ann_id(self, ann_id):
+        annot_dict = dict([(a[0], a[1:]) for a in self.annot_select])
+        _, _, bb = annot_dict[ann_id]
+        return bb
+    
+    def get_annotated_image(self, ann_id, return_caption=False, bbox_color='blue', width=3):
+        full_image, _, _, caption = self.get_imgs_from_ann_id(ann_id)
+        bbox = self.get_bbox_from_ann_id(ann_id)
+        bbox_xyxy = xywh_to_xyxy(bbox)
+        
+        draw = ImageDraw.Draw(full_image)
+        draw.rectangle(bbox_xyxy, outline=bbox_color, width=width)
+        
+        return full_image if not return_caption else (full_image, caption)
 
     def __getitem__(self, idx):
         ann_id, image_file, caption, bb = self.annot_select[idx]

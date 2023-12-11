@@ -254,3 +254,17 @@ def pad_mask_to_max(mask):
         return F.pad(mask, (floor(pad),ceil(pad),0,0), 'constant', True)
     else:  # center on x scale
         return F.pad(mask, (0,0,floor(pad),ceil(pad)), 'constant', True)
+    
+
+def xywh_to_xyxy(bbox):
+
+    x, y, w, h = bbox
+
+    # upper left
+    x1 = x
+    y1 = y
+    # lower right
+    x2 = x + w
+    y2 = y + h
+
+    return x1, y1, x2, y2
