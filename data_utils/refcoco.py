@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import Dataset
 from torchvision.transforms import ColorJitter, ToTensor, Resize, ToTensor, ToPILImage, Normalize, Compose
 import torchvision as tv
+import h5py
 
 from PIL import Image, ImageDraw
 import numpy as np
@@ -96,6 +97,9 @@ class RefCocoCaption(Dataset):
                  return_unique=False,
                  return_global_context=False,
                  return_location_features=False,
+                 return_scene_features=False,
+                 scene_summary_ids=None,
+                 scene_summary_features=None,
                  return_tensor=True,
                  ):
         super().__init__()
@@ -110,6 +114,9 @@ class RefCocoCaption(Dataset):
         self.return_global_context = return_global_context
         self.return_location_features = return_location_features
         self.return_tensor = return_tensor
+        self.return_scene_features = return_scene_features
+        self.scene_summary_ids = scene_summary_ids
+        self.scene_summary_features = scene_summary_features
 
         if return_unique:
             # filter for unique ids
@@ -197,14 +204,16 @@ class RefCocoCaption(Dataset):
             image, bb, return_context=True)
 
         # with transforms: proceed with building encoder input
-        #   if global=False, location=False:
+        #   if global=False, location=False, scene=False:
         #       encoder_input = t_img, t_mask
-        #   if global=True, location=False:
+        #   if global=True, location=False, scene=False:
         #       encoder_input = t_img, t_mask, g_img, g_mask
-        #   if global=False, location=True:
+        #   if global=False, location=True, scene=False:
         #       encoder_input = t_img, t_mask, loc
-        #   if global=True, location=True:
+        #   if global=True, location=True, scene=False:
         #       encoder_input = t_img, t_mask, g_img, g_mask, loc
+        #   if global=False, location=True, scene=True:
+        #       encoder_input = t_img, t_mask, loc, scene
 
         # target bb
         target_image = pad_img_to_max(target_image)
@@ -242,6 +251,14 @@ class RefCocoCaption(Dataset):
             else:
                 # for returning non-tensor images / visualization
                 encoder_input += [context_image]
+                
+
+        if self.return_scene_features: 
+            # add scene summaries
+            selection_mask = self.scene_summary_ids==ann_id
+            scene_summary = torch.from_numpy(
+                self.scene_summary_features[selection_mask]).squeeze()
+            encoder_input.append(scene_summary)
 
         if self.return_location_features:
             # add location features
@@ -286,6 +303,17 @@ def build_dataset(config,
     target_transform = auto_transform(mode, config, noise_coverage)
     context_transform = auto_transform(mode, config, 0)  # no noise for context
     
+    # handle scene summaries if set in config
+    if config.use_scene_summaries:
+        scenesum_filepath = os.path.join(
+            config.project_data_path, 'scene_summaries', f'scene_summaries_{partition}.h5')
+        print(f'read scene summaries from {scenesum_filepath}')
+        with h5py.File(scenesum_filepath,'r') as f:
+            scenesum_ann_ids = f['ann_ids'][:].squeeze(1)
+            scenesum_feats = f['context_feats'][:]
+    else: 
+        scenesum_ann_ids = scenesum_feats = None
+    
     if config.verbose:
         print(f'Initialize Dataset with mode: {partition}', 
             '\ntarget transformation:', target_transform, 
@@ -302,5 +330,9 @@ def build_dataset(config,
                              return_unique=return_unique,
                              return_global_context=config.use_global_features,
                              return_location_features=config.use_location_features, 
+                            return_scene_features=config.use_scene_summaries,
+                             scene_summary_ids=scenesum_ann_ids,
+                             scene_summary_features=scenesum_feats,
+
                              return_tensor=return_tensor)
     return dataset

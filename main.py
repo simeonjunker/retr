@@ -75,7 +75,8 @@ def main(args, config):
            
     loc_used = '_loc' if config.use_location_features else ''
     glob_used = '_glob' if config.use_global_features else ''
-    model_name = f'{config.transformer_type}_{config.prefix}{loc_used}{glob_used}_noise{str(args.target_noise).replace(".", "-")}'
+    scene_used = '_scene' if config.use_scene_summaries else ''
+    model_name = f'{config.transformer_type}_{config.prefix}{loc_used}{glob_used}{scene_used}_noise{str(args.target_noise).replace(".", "-")}'
 
     log_path = os.path.join(config.checkpoint_path, 'train_progress_' + model_name + '.log')
     logging.basicConfig(
@@ -140,11 +141,12 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--target_noise", default=0.0, type=float)
-    parser.add_argument("--no_context", action="store_true")
+    parser.add_argument("--use_context", action="store_true")
+    parser.add_argument("--use_scene_summaries", action='store_true')
     parser.add_argument("--save_samples", action="store_true")
     args = parser.parse_args()
     
-    # align config.use_global_features with args.no_context
-    config.use_global_features = False if args.no_context else True
+    config.use_global_features = args.use_context
+    config.use_scene_summaries = args.use_scene_summaries
     
     main(args, config)
