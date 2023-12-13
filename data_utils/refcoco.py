@@ -110,6 +110,10 @@ class RefCocoCaption(Dataset):
         self.annot = [(entry['ann_id'], self._process(entry['image_id']),
                        entry['caption'], entry['bbox']) for entry in data]
 
+        # TODO remove this after fixing the error!
+        if return_scene_features:
+            self.annot = [a for a in self.annot if a[0] not in [599584, 1617100, 1903307, 1963185, 2191866, 2227390, 1616547, 1619639]]
+
         # flags for input composition
         self.return_global_context = return_global_context
         self.return_location_features = return_location_features
@@ -304,7 +308,7 @@ def build_dataset(config,
     context_transform = auto_transform(mode, config, 0)  # no noise for context
     
     # handle scene summaries if set in config
-    if config.use_scene_summaries:
+    if vars(config).get('use_scene_summaries', False):
         scenesum_filepath = os.path.join(
             config.project_data_path, 'scene_summaries', f'scene_summaries_{partition}.h5')
         print(f'read scene summaries from {scenesum_filepath}')
@@ -328,9 +332,9 @@ def build_dataset(config,
                              target_transform=target_transform,
                              context_transform=context_transform,
                              return_unique=return_unique,
-                             return_global_context=config.use_global_features,
-                             return_location_features=config.use_location_features, 
-                            return_scene_features=config.use_scene_summaries,
+                             return_global_context=vars(config).get('use_global_features', False),
+                             return_location_features=vars(config).get('use_location_features', False), 
+                             return_scene_features=vars(config).get('use_scene_summaries', False),
                              scene_summary_ids=scenesum_ann_ids,
                              scene_summary_features=scenesum_feats,
 

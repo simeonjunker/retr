@@ -246,9 +246,9 @@ def build_model(config):
     
     transformer = build_concat_transformer(config)
 
-    use_global = config.use_global_features
-    use_location = config.use_location_features
-    use_scene_summaries = config.use_scene_summaries
+    use_global = vars(config).get('use_global_features', None)
+    use_location = vars(config).get('use_location_features', None)
+    use_scene_summaries = vars(config).get('use_scene_summaries', None)
 
     print(f'global features: {use_global}, location features: {use_location}, scene summaries: {use_scene_summaries}')
     

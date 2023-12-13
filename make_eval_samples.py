@@ -79,7 +79,7 @@ def img_to_b64(image):
 
 def main(args, local_config):
     
-    model_paths = sorted(glob(osp.join(args.input_dir, '**/**.pth')))
+    model_paths = sorted(glob(osp.join(args.input_dir, '**/**.pth' if args.subfolders else '**.pth')))
     print('found following models: ', model_paths)
     
     if not os.path.isdir(args.output_dir):
@@ -126,6 +126,8 @@ def main(args, local_config):
             model.eval()
         
         noise = noise_from_checkpoint(checkpoint_name)
+        if 'args' in checkpoint_data.keys():
+            assert noise == checkpoint_data['args'].target_noise
         assert noise is not None
 
         print(f'Successfully loaded {model.__class__.__name__} model with noise level {noise}')
@@ -180,6 +182,7 @@ def main(args, local_config):
         )
         global_features = data_loader.dataset.return_global_context
         location_features = data_loader.dataset.return_location_features
+        scene_features = data_loader.dataset.return_scene_features
 
         results = []
 
@@ -187,7 +190,7 @@ def main(args, local_config):
         for i, (ann_ids, *encoder_input, _, _) in tqdm(enumerate(data_loader)): 
 
             samples = pack_encoder_inputs(
-                encoder_input, global_features, location_features)
+                encoder_input, global_features, location_features, scene_features)
 
             # get model predictions
             generated = greedy_decoding(
@@ -250,16 +253,16 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
     
-    parser.add_argument('--input_dir', default=osp.join(PROJECT_PATH, 'checkpoints'))
+    parser.add_argument('--input_dir', default=osp.join(PROJECT_PATH, 'data', 'models', 'refcoco'))
     parser.add_argument('--split', default='val')
     parser.add_argument('--output_dir', default=osp.join(PROJECT_PATH, 'generated', 'identification_samples'))
     parser.add_argument('--overwrite_existing_files', action='store_true')
     parser.add_argument('--random_seed', default=42, type=int)
     parser.add_argument('--k', default=100, type=int)
     parser.add_argument('--print_samples', action='store_true')
+    parser.add_argument('--subfolders', action='store_true')
     
     args = parser.parse_args()
-    
     
     for k, v in vars(args).items():
         print(f'{k}: {v}')

@@ -142,7 +142,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--target_noise", default=0.0, type=float)
     parser.add_argument("--use_context", action="store_true")
-    parser.add_argument("--use_scene_summaries", action='store_true')
+    parser.add_argument("--use_scene_summaries", action='store_false')
     parser.add_argument("--save_samples", action="store_true")
     args = parser.parse_args()
     
