@@ -8,7 +8,7 @@ import json
 import argparse
 
 from models import utils, caption
-from data_utils import refcoco
+from data_utils import refcoco, paco
 from configuration import Config
 from engine import train_one_epoch, evaluate, eval_model
 from train_utils.checkpoints import save_ckp
@@ -44,12 +44,20 @@ def main(args, config):
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, config.lr_drop)
     score_tracker = ScoreTracker(config.stop_after_epochs)
     tokenizer, _, _ = prepare_tokenizer()
+    
+    # build datasets
+    if 'refcoco' in config.prefix:
+        build_dataset = refcoco.build_dataset
+    elif config.prefix.lower() == 'paco':
+        build_dataset = paco.build_dataset
+    else:
+        raise NotImplementedError
 
-    dataset_train = refcoco.build_dataset(
+    dataset_train = build_dataset(
         config, mode='training', noise_coverage=args.target_noise)
-    dataset_val = refcoco.build_dataset(
+    dataset_val = build_dataset(
         config, mode='validation', noise_coverage=args.target_noise)
-    dataset_cider = refcoco.build_dataset(
+    dataset_cider = build_dataset(
         config, mode='validation', return_unique=True, noise_coverage=args.target_noise)
     print(f"Train: {len(dataset_train)}")
     print(f"Valid: {len(dataset_val)}")
@@ -142,11 +150,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--target_noise", default=0.0, type=float)
     parser.add_argument("--use_context", action="store_true")
-    parser.add_argument("--use_scene_summaries", action='store_false')
+    parser.add_argument("--use_scene_summaries", action='store_true')
     parser.add_argument("--save_samples", action="store_true")
+    parser.add_argument("--dataset", default=None)
     args = parser.parse_args()
     
     config.use_global_features = args.use_context
     config.use_scene_summaries = args.use_scene_summaries
+
+    if args.dataset is not None:
+        print(f'overwrite config dataset ({config.prefix}) with ({args.dataset}) from args')
+        config.prefix = args.dataset
     
     main(args, config)

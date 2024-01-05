@@ -55,5 +55,7 @@ class Config(object):
         # Dataset
         self.dir = 'PATH_TO_COCO'  # COCO base dir (images)
         self.ref_base = 'PATH_TO_REF_BASE'  # RefCOCO* base dir (annotations)
+        self.paco_base = 'PATH'  # PACO annotations
+        self.paco_imgs = 'PATH'  # PACO images
         self.ref_dir = join(self.ref_base, self.prefix)
         self.limit = -1

@@ -10,7 +10,7 @@ import os
 
 from transformers import BertTokenizer
 
-from .utils import crop_image_to_bb, get_refcoco_data, compute_position_features, pad_img_to_max, pad_mask_to_max, xywh_to_xyxy
+from .utils import crop_image_to_bb, get_paco_df, compute_position_features, pad_img_to_max, pad_mask_to_max, xywh_to_xyxy
 
 
 class CoverWithNoise:
@@ -90,11 +90,10 @@ class RefCocoCaption(Dataset):
 
     def __init__(self,
                  data,
-                 root,
+                 img_root,
                  max_length,
                  target_transform=None,
                  context_transform=None,
-                 return_unique=False,
                  return_global_context=False,
                  return_location_features=False,
                  return_scene_features=False,
@@ -104,11 +103,11 @@ class RefCocoCaption(Dataset):
                  ):
         super().__init__()
 
-        self.root = root
+        self.img_root = img_root
         self.target_transform = target_transform
         self.context_transform = context_transform if context_transform is not None else target_transform
-        self.annot = [(entry['ann_id'], self._process(entry['image_id']),
-                       entry['caption'], entry['bbox']) for entry in data]
+        self.annot = [(entry['index'], entry['file_name'],
+                       entry['name'], entry['bbox']) for entry in data]
 
         # TODO remove this after fixing the error!
         if return_scene_features:
@@ -122,34 +121,21 @@ class RefCocoCaption(Dataset):
         self.scene_summary_ids = scene_summary_ids
         self.scene_summary_features = scene_summary_features
 
-        if return_unique:
-            # filter for unique ids
-            self.annot_select = []
-            stored_ids = []
-            for a in self.annot:
-                if a[0] not in stored_ids:
-                    self.annot_select.append(a)
-                    stored_ids.append(a[0])
-        else:
-            self.annot_select = self.annot
+        # no return_unique in PACODataset
+        self.annot_select = self.annot
 
         self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased',
                                                        do_lower=True)
         self.max_length = max_length + 1
 
-    def _process(self, image_id):
-        val = str(image_id).zfill(12)
-        return 'COCO_train2014_' + val + '.jpg'
-
     def __len__(self):
         return len(self.annot_select)
-
     
     def get_imgs_from_ann_id(self, ann_id):
         annot_dict = dict([(a[0], a[1:]) for a in self.annot_select])
         image_file, caption, bb = annot_dict[ann_id]
 
-        image_filepath = os.path.join(self.root, 'train2014', image_file)
+        image_filepath = os.path.join(self.img_root, image_file)
         assert os.path.isfile(image_filepath)
         image = Image.open(image_filepath)
         
@@ -178,7 +164,7 @@ class RefCocoCaption(Dataset):
 
     def __getitem__(self, idx):
         ann_id, image_file, caption, bb = self.annot_select[idx]
-        image_filepath = os.path.join(self.root, 'train2014', image_file)
+        image_filepath = os.path.join(self.img_root, image_file)
         assert os.path.isfile(image_filepath)
 
         image = Image.open(image_filepath)
@@ -272,36 +258,50 @@ class RefCocoCaption(Dataset):
         return ann_id, *encoder_input, caption, cap_mask
 
 
+def process_part_names(df, only='part'):
+    
+    parts_df = df.loc[df.supercategory == 'PART']
+    
+    if only == 'part':
+        parts_df['name'] = parts_df['name'].map(lambda x: x.split(':')[-1]) # keep part after ':'
+    elif only == 'full':
+        parts_df['name'] = parts_df['name'].map(lambda x: x.split(':')[0])  # keep part before ':'
+    else:
+        raise NotImplementedError(f"'only' value has to by 'part' or 'full', but is {only}")
+    
+    df.loc[parts_df.index] = parts_df
+    
+    return df
+
+
 def build_dataset(config,
                   mode='training',
                   return_unique=False, 
                   return_tensor=True,
-                  noise_coverage=0):
+                  noise_coverage=0,
+                  parts_only_part=False,
+                  parts_only_full=False):
 
-    assert mode in ['training', 'train', 'validation', 'val', 'testa', 'testb', 'test']
-
-    # get refcoco data
+    assert mode in ['training', 'train', 'validation', 'val', 'test'], f"{mode} not supported"
+    if mode == 'training':
+        mode = 'train'
+    elif mode == 'validation': 
+        mode = 'val'
+    elif mode == 'test':
+        mode = 'test_dev'
+        
     if config.verbose:
-        print(f'using data from {config.prefix}')
-
-    full_data, ids = get_refcoco_data(config.ref_dir)
-
-    # select data partition
+        print(f'using data from {config.prefix} {mode}')
+        
+    # get paco data
+    paco_ann_file = f'paco_ego4d_v1_{mode}.json'
+    paco_ann_path = os.path.join(config.paco_base, paco_ann_file)
+    data = get_paco_df(paco_ann_path).reset_index()
     
-    if mode.lower() in ['training', 'train']:
-        partition = 'train'
-    elif mode.lower() in ['validation', 'val']:
-        partition = 'val'
-    elif mode.lower() == 'testa':  # refcoco / refcoco+
-        partition = 'testA'
-    elif mode.lower() == 'testb':  # refcoco / refcoco+
-        partition = 'testB'
-    elif mode.lower() == 'test':  # refcocog
-        partition = 'test'
-    else:
-        raise NotImplementedError(f"{mode} not supported")
-    
-    data = full_data.loc[ids['caption_ids'][partition]]
+    if parts_only_part:
+        data = process_part_names(data, only='part')
+    elif parts_only_full:
+        data = process_part_names(data, only='full')
     
     # set target and context transformation according to mode
     target_transform = auto_transform(mode, config, noise_coverage)
@@ -309,27 +309,28 @@ def build_dataset(config,
     
     # handle scene summaries if set in config
     if vars(config).get('use_scene_summaries', False):
-        scenesum_filepath = os.path.join(
-            config.project_data_path, 'scene_summaries', f'scene_summaries_{partition}.h5')
-        print(f'read scene summaries from {scenesum_filepath}')
-        with h5py.File(scenesum_filepath,'r') as f:
-            scenesum_ann_ids = f['ann_ids'][:].squeeze(1)
-            scenesum_feats = f['context_feats'][:]
+        raise NotImplementedError('Scene Summaries are not implemented')
+        # scenesum_filepath = os.path.join(
+        #     config.project_data_path, 'scene_summaries', f'scene_summaries_{partition}.h5')
+        # print(f'read scene summaries from {scenesum_filepath}')
+        # with h5py.File(scenesum_filepath,'r') as f:
+        #     scenesum_ann_ids = f['ann_ids'][:].squeeze(1)
+        #     scenesum_feats = f['context_feats'][:]
     else: 
         scenesum_ann_ids = scenesum_feats = None
 
     # build dataset
     dataset = RefCocoCaption(data=data.to_dict(orient='records'),
-                             root=config.dir,
+                             img_root=config.paco_imgs,
                              max_length=config.max_position_embeddings,
                              target_transform=target_transform,
                              context_transform=context_transform,
-                             return_unique=return_unique,
                              return_global_context=vars(config).get('use_global_features', False),
                              return_location_features=vars(config).get('use_location_features', False), 
                              return_scene_features=vars(config).get('use_scene_summaries', False),
                              scene_summary_ids=scenesum_ann_ids,
                              scene_summary_features=scenesum_feats,
+
                              return_tensor=return_tensor)
     
     if config.verbose:
@@ -338,8 +339,10 @@ def build_dataset(config,
             '\ntarget transformation:', target_transform, 
             '\ncontext transformation:', context_transform,
             f'\nentries: {len(dataset)}',
-            '\nreturn unique:', return_unique,
+            '\nreturn unique (without function in PACO):', return_unique,
+            '\nreturn only part names (for parts):', parts_only_part,
+            '\nreturn only full names (for parts):', parts_only_full, 
             '\n'
         )
-
+    
     return dataset
