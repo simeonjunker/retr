@@ -10,7 +10,7 @@ import os
 
 from transformers import BertTokenizer
 
-from .utils import crop_image_to_bb, get_paco_df, compute_position_features, pad_img_to_max, pad_mask_to_max, xywh_to_xyxy
+from .utils import crop_image_to_bb, get_paco_df, compute_position_features, pad_img_to_max, pad_mask_to_max, xywh_to_xyxy, remove_neg_vals_from_bb
 
 
 class CoverWithNoise:
@@ -280,7 +280,8 @@ def build_dataset(config,
                   return_tensor=True,
                   noise_coverage=0,
                   parts_only_part=False,
-                  parts_only_full=False):
+                  parts_only_full=False,
+                  remove_negative_bbox_values=True):
 
     assert mode in ['training', 'train', 'validation', 'val', 'test'], f"{mode} not supported"
     if mode == 'training':
@@ -318,6 +319,10 @@ def build_dataset(config,
         #     scenesum_feats = f['context_feats'][:]
     else: 
         scenesum_ann_ids = scenesum_feats = None
+        
+    if remove_negative_bbox_values:
+        # some entries contain erroneous negative values
+        data.bbox = data.bbox.map(remove_neg_vals_from_bb)  # set negative values to 0
 
     # build dataset
     dataset = RefCocoCaption(data=data.to_dict(orient='records'),
@@ -342,6 +347,7 @@ def build_dataset(config,
             '\nreturn unique (without function in PACO):', return_unique,
             '\nreturn only part names (for parts):', parts_only_part,
             '\nreturn only full names (for parts):', parts_only_full, 
+            '\nset negative bb values to zero:', remove_negative_bbox_values,
             '\n'
         )
     
