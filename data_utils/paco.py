@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import Dataset
 from torchvision.transforms import ColorJitter, ToTensor, Resize, ToTensor, ToPILImage, Normalize, Compose
 import torchvision as tv
+import pandas as pd
 import h5py
 
 from PIL import Image, ImageDraw
@@ -10,7 +11,7 @@ import os
 
 from transformers import BertTokenizer
 
-from .utils import crop_image_to_bb, get_paco_df, compute_position_features, pad_img_to_max, pad_mask_to_max, xywh_to_xyxy, remove_neg_vals_from_bb
+from .utils import crop_image_to_bb, get_paco_df, compute_position_features, pad_img_to_max, pad_mask_to_max, xywh_to_xyxy
 
 
 class CoverWithNoise:
@@ -106,7 +107,7 @@ class RefCocoCaption(Dataset):
         self.img_root = img_root
         self.target_transform = target_transform
         self.context_transform = context_transform if context_transform is not None else target_transform
-        self.annot = [(entry['index'], entry['file_name'],
+        self.annot = [(entry['id'], entry['file_name'],
                        entry['name'], entry['bbox']) for entry in data]
 
         # TODO remove this after fixing the error!
@@ -281,7 +282,7 @@ def build_dataset(config,
                   noise_coverage=0,
                   parts_only_part=False,
                   parts_only_full=False,
-                  remove_negative_bbox_values=True):
+                  ):
 
     assert mode in ['training', 'train', 'validation', 'val', 'test'], f"{mode} not supported"
     if mode == 'training':
@@ -295,10 +296,15 @@ def build_dataset(config,
         print(f'using data from {config.prefix} {mode}')
         
     # get paco data
-    paco_ann_file = f'paco_ego4d_v1_{mode}.json'
-    paco_ann_path = os.path.join(config.paco_base, paco_ann_file)
-    data = get_paco_df(paco_ann_path).reset_index()
-    
+    if config.use_normalized_paco:
+        paco_ann_file = f'paco_ego4d_v1_{mode}_cleaned.json'
+        paco_ann_path = os.path.join(config.paco_base, paco_ann_file)
+        data = pd.read_json(paco_ann_path)
+    else:
+        paco_ann_file = f'paco_ego4d_v1_{mode}.json'
+        paco_ann_path = os.path.join(config.paco_base, paco_ann_file)
+        data = get_paco_df(paco_ann_path).reset_index()
+        
     if parts_only_part:
         data = process_part_names(data, only='part')
     elif parts_only_full:
@@ -320,10 +326,6 @@ def build_dataset(config,
     else: 
         scenesum_ann_ids = scenesum_feats = None
         
-    if remove_negative_bbox_values:
-        # some entries contain erroneous negative values
-        data.bbox = data.bbox.map(remove_neg_vals_from_bb)  # set negative values to 0
-
     # build dataset
     dataset = RefCocoCaption(data=data.to_dict(orient='records'),
                              img_root=config.paco_imgs,
@@ -347,7 +349,7 @@ def build_dataset(config,
             '\nreturn unique (without function in PACO):', return_unique,
             '\nreturn only part names (for parts):', parts_only_part,
             '\nreturn only full names (for parts):', parts_only_full, 
-            '\nset negative bb values to zero:', remove_negative_bbox_values,
+            f'\nuse normalized PACO: {config.use_normalized_paco}',
             '\n'
         )
     

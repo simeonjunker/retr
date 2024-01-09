@@ -57,5 +57,6 @@ class Config(object):
         self.ref_base = 'PATH_TO_REF_BASE'  # RefCOCO* base dir (annotations)
         self.paco_base = 'PATH'  # PACO annotations
         self.paco_imgs = 'PATH'  # PACO images
+        self.use_normalized_paco = True
         self.ref_dir = join(self.ref_base, self.prefix)
         self.limit = -1
