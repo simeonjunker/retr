@@ -6,6 +6,7 @@ import os
 import logging
 import json
 import argparse
+from glob import glob
 
 from models import utils, caption
 from data_utils import refcoco, paco
@@ -78,15 +79,33 @@ def main(args, config):
     data_loader_cider = DataLoader(dataset_cider, config.batch_size,
                                  sampler=sampler_cider, drop_last=False, num_workers=config.num_workers)
 
-    if not os.path.exists(config.checkpoint_path):
-        os.mkdir(config.checkpoint_path)
+    noise_str = str(args.target_noise).replace(".", "-")
+
+    if args.auto_checkpoint_path:
+        
+        if config.use_global_features:
+            context_str = 'context'
+        elif config.use_scene_summaries:
+            context_str = 'scene'
+        else:
+            context_str = 'nocontext'
+            
+        checkpoint_path = os.path.join(config.project_data_path, 'models', config.prefix, f'noise_{noise_str}_{context_str}')
+        
+    else: 
+        checkpoint_path = config.checkpoint_path
+        
+    print(f'Saving model checkpoints to {checkpoint_path}')
+    
+    if not os.path.exists(checkpoint_path):
+        os.makedirs(checkpoint_path)
            
     loc_used = '_loc' if config.use_location_features else ''
     glob_used = '_glob' if config.use_global_features else ''
     scene_used = '_scene' if config.use_scene_summaries else ''
-    model_name = f'{config.transformer_type}_{config.prefix}{loc_used}{glob_used}{scene_used}_noise{str(args.target_noise).replace(".", "-")}'
+    model_name = f'{config.transformer_type}_{config.prefix}{loc_used}{glob_used}{scene_used}_noise{noise_str}'
 
-    log_path = os.path.join(config.checkpoint_path, 'train_progress_' + model_name + '.log')
+    log_path = os.path.join(checkpoint_path, 'train_progress_' + model_name + '.log')
     logging.basicConfig(
         filename=log_path, 
         level=logging.DEBUG
@@ -113,7 +132,7 @@ def main(args, config):
         if args.save_samples:
             sample_name = f"{model_name}-{epoch:03d}-samples.json"
             with open(
-                os.path.join(config.checkpoint_path, sample_name),
+                os.path.join(checkpoint_path, sample_name),
                 "w",
             ) as f:
                 json.dump(ids_hypotheses, f)
@@ -130,13 +149,23 @@ def main(args, config):
                 print('non maximum score -- do not save model weights')
 
         if save_model:
+            
             checkpoint_name = model_name + f'_checkpoint_{epoch:03d}.pth'
             print(f'save model weights to {checkpoint_name}')
             save_ckp(
                 epoch, model, optimizer, lr_scheduler, args, config,
                 train_loss=epoch_loss, val_loss=validation_loss, cider_score=cider_score,
-                path=os.path.join(config.checkpoint_path, checkpoint_name)
+                path=os.path.join(checkpoint_path, checkpoint_name)
             )
+            
+            if args.clean_old_checkpoints:
+                for old_epoch in range(epoch):
+                    old_checkpoint = model_name + f'_checkpoint_{old_epoch:03d}.pth'
+                    old_path = os.path.join(checkpoint_path, old_checkpoint)
+                    if os.path.isfile(old_path):
+                        print(f'removing old checkpoint {old_checkpoint}')
+                        os.remove(old_path)
+                
         
         if score_tracker.stop():
             break
@@ -153,6 +182,8 @@ if __name__ == "__main__":
     parser.add_argument("--use_scene_summaries", action='store_true')
     parser.add_argument("--save_samples", action="store_true")
     parser.add_argument("--dataset", default=None)
+    parser.add_argument("--auto_checkpoint_path", default=True, type=bool)
+    parser.add_argument("--clean_old_checkpoints", default=True, type=bool)
     args = parser.parse_args()
     
     config.use_global_features = args.use_context
