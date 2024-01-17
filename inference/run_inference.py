@@ -85,6 +85,7 @@ if __name__ == "__main__":
     config = checkpoint_data['config']
     model_args = checkpoint_data['args']
     config.dir = local_config.dir
+    config.project_data_path = local_config.project_data_path
     config.ref_base = local_config.ref_base
     config.ref_dir = local_config.ref_dir
 
