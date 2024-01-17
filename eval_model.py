@@ -2,7 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 import argparse
 from models import caption
-from data_utils import refcoco
+from data_utils import refcoco, paco
 from configuration import Config
 import os
 import json
@@ -16,10 +16,6 @@ def prepare_model(args, config):
 
     # load model
     assert args.checkpoint is not None
-
-    if args.override_config:
-        # overriding config settings with parameters given by checkpoint
-        override_config_with_checkpoint(args.checkpoint, config)
         
     noise = noise_from_checkpoint(args.checkpoint)
 
@@ -34,7 +30,8 @@ def prepare_model(args, config):
 
 
 def setup_val_dataloader(config, noise_coverage, split='validation'):
-    dataset_val = refcoco.build_dataset(
+    build_dataset = paco.build_dataset if config.prefix.lower() == 'paco' else refcoco.build_dataset
+    dataset_val = build_dataset(
         config, 
         mode=split, 
         noise_coverage=noise_coverage,
@@ -48,42 +45,6 @@ def setup_val_dataloader(config, noise_coverage, split='validation'):
         num_workers=config.num_workers,
     )
     return data_loader_val
-
-
-def override_config_with_checkpoint(checkpoint, config):
-    use_glob = config.use_global_features
-    use_loc = config.use_location_features
-    
-    if 'loc_checkpoint' in checkpoint:
-        if not (not use_glob and use_loc):
-            # override settings
-            config.use_global_features = False
-            config.use_location_features = True
-            # send warning
-            print(f'''CAUTION: Overriding configuration!
-                WAS: use_global_features=={use_glob};\
-                    use_location_features=={use_loc};\
-                NEW: use_global_features=={config.use_global_features};\
-                    use_location_features=={config.use_location_features};\
-                ''')
-            
-    elif 'loc_glob_checkpoint' in checkpoint:
-        if not (use_glob and use_loc):
-            # override settings
-            config.use_global_features = True
-            config.use_location_features = True
-            # send warning
-            print(f'''CAUTION: Overriding configuration!
-                WAS: use_global_features=={use_glob};\
-                    use_location_features=={use_loc};\
-                NEW: use_global_features=={config.use_global_features};\
-                    use_location_features=={config.use_location_features};\
-                ''')
-             
-    else:
-        raise NotImplementedError(
-            "Overriding model checkpoints is not supported for the model type given by the checkpoint"
-        )
 
 
 def noise_from_checkpoint(checkpoint):

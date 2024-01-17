@@ -72,11 +72,12 @@ def eval_model_with_att(model, data_loader, tokenizer,
 
     global_features = data_loader.dataset.return_global_context
     location_features = data_loader.dataset.return_location_features
+    scene_features = data_loader.dataset.return_scene_features
 
     # decode imgs in val set
     for i, (ann_ids, *encoder_input, _, _) in enumerate(tqdm.tqdm(data_loader)):
 
-        samples = pack_encoder_inputs(encoder_input, global_features, location_features)
+        samples = pack_encoder_inputs(encoder_input, global_features, location_features, scene_features)
 
         # get model predictions (with greedy/att function)
         hyp_ids, atts = greedy_with_att(
@@ -137,12 +138,13 @@ def eval_model_with_att(model, data_loader, tokenizer,
     return metrics_dict, ids_hypotheses
 
 
-def main_val_set_with_att(args, config):
+def main_val_set_with_att(args, model_args, config):
 
     # model
     model, noise = prepare_model(args, config)
+    assert noise == model_args.target_noise
     model.to(args.device)
-    print(f'Successfully loaded {model.__class__.__name__} model')
+    print(f'Successfully loaded {model.__class__.__name__} model with noise coverage {noise}')
 
     # tokenizer
     tokenizer, _, _ = prepare_tokenizer()

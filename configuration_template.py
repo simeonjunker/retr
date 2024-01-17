@@ -17,7 +17,7 @@ class Config(object):
         self.weight_decay = 1e-4
 
         # Backbone
-        self.backbone = 'ResNet101'
+        self.backbone = 'ResNet152'
         self.position_embedding = 'sine'
         self.dilation = True
         

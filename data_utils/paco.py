@@ -87,7 +87,7 @@ def auto_transform(mode, config, noise_coverage):
         return get_transforms('val', config, noise_coverage)
 
 
-class RefCocoCaption(Dataset):
+class PACODataset(Dataset):
 
     def __init__(self,
                  data,
@@ -110,9 +110,7 @@ class RefCocoCaption(Dataset):
         self.annot = [(entry['id'], entry['file_name'],
                        entry['name'], entry['bbox']) for entry in data]
 
-        # TODO remove this after fixing the error!
-        if return_scene_features:
-            self.annot = [a for a in self.annot if a[0] not in [599584, 1617100, 1903307, 1963185, 2191866, 2227390, 1616547, 1619639]]
+        assert return_scene_features == False
 
         # flags for input composition
         self.return_global_context = return_global_context
@@ -242,14 +240,6 @@ class RefCocoCaption(Dataset):
             else:
                 # for returning non-tensor images / visualization
                 encoder_input += [context_image]
-                
-
-        if self.return_scene_features: 
-            # add scene summaries
-            selection_mask = self.scene_summary_ids==ann_id
-            scene_summary = torch.from_numpy(
-                self.scene_summary_features[selection_mask]).squeeze()
-            encoder_input.append(scene_summary)
 
         if self.return_location_features:
             # add location features
@@ -327,7 +317,7 @@ def build_dataset(config,
         scenesum_ann_ids = scenesum_feats = None
         
     # build dataset
-    dataset = RefCocoCaption(data=data.to_dict(orient='records'),
+    dataset = PACODataset(data=data.to_dict(orient='records'),
                              img_root=config.paco_imgs,
                              max_length=config.max_position_embeddings,
                              target_transform=target_transform,

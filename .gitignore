@@ -1,4 +1,6 @@
 *configuration.py
+configuration_cluster.py
+configuration_bender.py
 data/*
 .vscode
 bash
