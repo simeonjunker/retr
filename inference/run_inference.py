@@ -36,7 +36,7 @@ def main(args, model_args, model_epoch, config):
     # create output dir
     
     if args.auto_checkpoint_path:
-        outdir = os.path.join(args.output_directory, 'models', dataset_str, f'{noise_str}_{context}')
+        outdir = os.path.join(args.output_directory, 'models', dataset_str, f'{noise_str.replace(":", "_")}_{context}')
     else: 
         outdir = args.output_directory
     
