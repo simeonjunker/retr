@@ -12,49 +12,61 @@ sys.path.append(abspath(join(file_path, os.pardir, 'model')))
 
 from configuration import Config
 
-def main(args, model_args, config):
 
-        # decode dataset
-        metrics, generated = main_val_set_with_att(args, model_args, config)
+def main(args, model_args, model_epoch, config):
+    
+    # parse info
+    
+    dataset_str = config.prefix
 
-        print(metrics)
+    architecture_str = 'trf'
 
-        assert args.checkpoint is not None
-        model_name = split(args.checkpoint)[-1]
+    if model_args.use_context:
+        context = 'global'
+    elif model_args.use_scene_summaries:
+        context = 'scene'
+    else:
+        context = 'nocontext'
+    context_str = f'context:{context}'
+
+    noise_str = f"noise:{str(model_args.target_noise).replace('.', '-')}"
+
+    epoch_str = f"epoch:{str(model_epoch).rjust(2,'0')}"
+    
+    # create output dir
+    
+    if args.auto_checkpoint_path:
+        outdir = os.path.join(args.output_directory, 'models', dataset_str, f'{noise_str}_{context}')
+    else: 
+        outdir = args.output_directory
+    
+    if not os.path.isdir(outdir):
+        print(f"create output directory {outdir}")
+        os.makedirs(outdir)
+    
+    # decode dataset
+    
+    metrics, generated = main_val_set_with_att(args, model_args, config)
+    print(metrics)
+
+    # save generated expressions
+    
+    file_prefix = f'{dataset_str}_{args.split}_{architecture_str}_{context_str}_{noise_str}_{epoch_str}'
         
-        if args.auto_checkpoint_path:
-            
-            noise_str = str(model_args.target_noise).replace(".", "-")
-            
-            if config.use_global_features:
-                context_str = 'context'
-            elif config.use_scene_summaries:
-                context_str = 'scene'
-            else:
-                context_str = 'nocontext'
-                
-            outdir = os.path.join(args.output_directory, 'models', config.prefix, f'noise_{noise_str}_{context_str}')
-            
-        else: 
-            outdir = args.output_directory
-        
-        if not os.path.isdir(outdir):
-            print(f"create output directory {outdir}")
-            os.makedirs(outdir)
+    outfile_name = f"{file_prefix}-generated.pkl"
+    outfile_path = os.path.join(outdir, outfile_name)
+    print(f"write generated expressions to {outfile_path}")
+    with open(outfile_path, "wb") as f:
+        pickle.dump(generated, f)
 
-        # generated expressions
-        outfile_name = model_name.replace(".pth", f"_{args.split}_generated.pkl")
-        outfile_path = os.path.join(outdir, outfile_name)
-        print(f"write generated expressions to {outfile_path}")
-        with open(outfile_path, "wb") as f:
-            pickle.dump(generated, f)
+    # save evaluation results
+    
+    outfile_name = f"{file_prefix}-metrics.pkl"
+    outfile_path = os.path.join(outdir, outfile_name)
+    print(f"write evaluation results to {outfile_path}")
+    with open(outfile_path, "w") as f:
+        json.dump(metrics, f)
 
-        # evaluation results
-        outfile_name = model_name.replace(".pth", f"_{args.split}_eval.json")
-        outfile_path = os.path.join(outdir, outfile_name)
-        print(f"write evaluation results to {outfile_path}")
-        with open(outfile_path, "w") as f:
-            json.dump(metrics, f)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="REG")
@@ -84,6 +96,7 @@ if __name__ == "__main__":
     print('using config from checkpoint')
     config = checkpoint_data['config']
     model_args = checkpoint_data['args']
+    model_epoch = checkpoint_data['epoch']
     config.dir = local_config.dir
     config.project_data_path = local_config.project_data_path
     config.ref_base = local_config.ref_base
@@ -94,4 +107,4 @@ if __name__ == "__main__":
     print('config:', vars(config))
     print('args: ', vars(args))
 
-    main(args, model_args, config)
+    main(args, model_args, model_epoch, config)
