@@ -53,7 +53,7 @@ def main(args, model_args, model_epoch, config):
     
     file_prefix = f'{dataset_str}_{args.split}_{architecture_str}_{context_str}_{noise_str}_{epoch_str}'
         
-    outfile_name = f"{file_prefix}-generated.pkl"
+    outfile_name = f"{file_prefix}_generated.pkl"
     outfile_path = os.path.join(outdir, outfile_name)
     print(f"write generated expressions to {outfile_path}")
     with open(outfile_path, "wb") as f:
@@ -61,7 +61,7 @@ def main(args, model_args, model_epoch, config):
 
     # save evaluation results
     
-    outfile_name = f"{file_prefix}-metrics.pkl"
+    outfile_name = f"{file_prefix}_metrics.pkl"
     outfile_path = os.path.join(outdir, outfile_name)
     print(f"write evaluation results to {outfile_path}")
     with open(outfile_path, "w") as f:
