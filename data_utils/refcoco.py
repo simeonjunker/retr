@@ -309,8 +309,9 @@ def build_dataset(config,
     
     # handle scene summaries if set in config
     if vars(config).get('use_scene_summaries', False):
+        scene_summary_type = vars(config).get('scene_summary_type', 'annotated')
         scenesum_filepath = os.path.join(
-            config.project_data_path, 'scene_summaries', f'scene_summaries_{partition}.h5')
+            config.project_data_path, 'scene_summaries', f'scene_summaries_{scene_summary_type}_{partition}.h5')
         print(f'read scene summaries from {scenesum_filepath}')
         with h5py.File(scenesum_filepath,'r') as f:
             scenesum_ann_ids = f['ann_ids'][:].squeeze(1)

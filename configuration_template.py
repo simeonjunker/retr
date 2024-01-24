@@ -35,6 +35,8 @@ class Config(object):
         self.stop_after_epochs = 3
         self.use_global_features = False
         self.use_location_features = False
+        self.use_scene_summaries = False
+        self.scene_summary_type='annotated'  # 'annotated' or 'predicted'
         self.verbose = True
 
         # Transformer
