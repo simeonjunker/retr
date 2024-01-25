@@ -110,10 +110,6 @@ class RefCocoCaption(Dataset):
         self.annot = [(entry['ann_id'], self._process(entry['image_id']),
                        entry['caption'], entry['bbox']) for entry in data]
 
-        # TODO remove this after fixing the error!
-        if return_scene_features:
-            self.annot = [a for a in self.annot if a[0] not in [599584, 1617100, 1903307, 1963185, 2191866, 2227390, 1616547, 1619639]]
-
         # flags for input composition
         self.return_global_context = return_global_context
         self.return_location_features = return_location_features
