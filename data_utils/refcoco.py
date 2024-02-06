@@ -278,7 +278,7 @@ def build_dataset(config,
 
     # get refcoco data
     if config.verbose:
-        print(f'using data from {config.prefix}')
+        print(f'using data from {config.prefix} / {config.ref_dir}')
 
     full_data, ids = get_refcoco_data(config.ref_dir)
 

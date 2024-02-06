@@ -7,6 +7,7 @@ import logging
 import json
 import argparse
 from glob import glob
+import os.path as osp
 
 from models import utils, caption
 from data_utils import refcoco, paco
@@ -192,5 +193,7 @@ if __name__ == "__main__":
     if args.dataset is not None:
         print(f'overwrite config dataset ({config.prefix}) with ({args.dataset}) from args')
         config.prefix = args.dataset
+        config.ref_dir = osp.join(config.ref_base, config.prefix)
+        config.checkpoint_path = osp.join(config.project_data_path, 'models', config.prefix)
     
     main(args, config)
