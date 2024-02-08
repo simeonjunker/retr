@@ -72,7 +72,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="REG")
 
     parser.add_argument(
-        "--split", type=str.lower, choices=["val", "testa", "testb"], default="val"
+        "--split", type=str.lower, choices=["val", "testa", "testb", "test"], default="val"
     )
     parser.add_argument("--path", type=str, help="path to image", default=None)
     parser.add_argument("--checkpoint", type=str, help="checkpoint path", default=None, required=True)
