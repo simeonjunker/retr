@@ -101,6 +101,8 @@ if __name__ == "__main__":
     config.project_data_path = local_config.project_data_path
     config.ref_base = local_config.ref_base
     config.ref_dir = local_config.ref_dir
+    config.paco_base = local_config.paco_base
+    config.paco_imgs = local_config.paco_imgs
 
     config.batch_size = 1  # override batch size
 
