@@ -279,8 +279,6 @@ def build_dataset(config,
         mode = 'train'
     elif mode == 'validation': 
         mode = 'val'
-    elif mode == 'test':
-        mode = 'test_dev'
         
     if config.verbose:
         print(f'using data from {config.prefix} {mode}')
