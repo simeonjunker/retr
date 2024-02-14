@@ -100,7 +100,7 @@ if __name__ == "__main__":
     config.dir = local_config.dir
     config.project_data_path = local_config.project_data_path
     config.ref_base = local_config.ref_base
-    config.ref_dir = local_config.ref_dir
+    config.ref_dir = join(config.ref_base, config.prefix)
     config.paco_base = local_config.paco_base
     config.paco_imgs = local_config.paco_imgs
 
