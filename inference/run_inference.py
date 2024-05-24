@@ -46,14 +46,15 @@ def main(args, model_args, model_epoch, config):
     
     # decode dataset
     
-    metrics, generated = main_val_set_with_att(args, model_args, config)
+    metrics, generated = main_val_set_with_att(args, model_args, config, skip_attentions=args.skip_attentions)
     print(metrics)
 
     # save generated expressions
     
     file_prefix = f'{dataset_str}_{args.split}_{architecture_str}_{context_str}_{noise_str}_{epoch_str}'
-        
-    outfile_name = f"{file_prefix}_generated.pkl"
+    idx_suffix = f'_{args.idx_suffix}' if args.idx_suffix is not None else ''
+
+    outfile_name = f"{file_prefix}_generated{idx_suffix}.pkl"
     outfile_path = os.path.join(outdir, outfile_name)
     print(f"write generated expressions to {outfile_path}")
     with open(outfile_path, "wb") as f:
@@ -61,7 +62,7 @@ def main(args, model_args, model_epoch, config):
 
     # save evaluation results
     
-    outfile_name = f"{file_prefix}_metrics.json"
+    outfile_name = f"{file_prefix}_metrics{idx_suffix}.json"
     outfile_path = os.path.join(outdir, outfile_name)
     print(f"write evaluation results to {outfile_path}")
     with open(outfile_path, "w") as f:
@@ -82,6 +83,8 @@ if __name__ == "__main__":
     parser.add_argument("--print_samples", action="store_true")
     parser.add_argument("--output_directory", default=os.path.abspath("../data/results"))
     parser.add_argument("--auto_checkpoint_path", default=True, type=bool)
+    parser.add_argument("--skip_attentions", action='store_true')
+    parser.add_argument("--idx_suffix", default=None)
 
     args = parser.parse_args()
 

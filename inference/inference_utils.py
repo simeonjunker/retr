@@ -47,7 +47,7 @@ def override_config_with_checkpoint(checkpoint, config):
 
 
 def eval_model_with_att(model, data_loader, tokenizer,
-               config, metrics_to_omit=[],
+               config, metrics_to_omit=[], skip_attentions=False,
                print_samples=False):
     """
     iterate through val_loader and calculate CIDEr scores for model
@@ -112,8 +112,8 @@ def eval_model_with_att(model, data_loader, tokenizer,
             {
                 'ann_id': ann_ids.item(),
                 'expression_ids': hyp_ids.tolist(),
-                'encoder_attentions': stacked_encoder_atts.detach().cpu().numpy(),
-                'decoder_attentions': stacked_decoder_atts.detach().cpu().numpy(),
+                'encoder_attentions': stacked_encoder_atts.detach().cpu().numpy() if not skip_attentions else None,
+                'decoder_attentions': stacked_decoder_atts.detach().cpu().numpy() if not skip_attentions else None,
                 'expression_string': decoded_hyp
             }
         )
@@ -138,7 +138,7 @@ def eval_model_with_att(model, data_loader, tokenizer,
     return metrics_dict, ids_hypotheses
 
 
-def main_val_set_with_att(args, model_args, config):
+def main_val_set_with_att(args, model_args, config, skip_attentions=False):
 
     # model
     model, noise = prepare_model(args, config)
@@ -152,7 +152,7 @@ def main_val_set_with_att(args, model_args, config):
     data_loader = setup_val_dataloader(config, noise_coverage=noise, split=args.split)
 
     metrics, generated = eval_model_with_att(
-        model, data_loader, tokenizer, config, print_samples=args.print_samples
+        model, data_loader, tokenizer, config, print_samples=args.print_samples, skip_attentions=skip_attentions
     )
 
     return metrics, generated
