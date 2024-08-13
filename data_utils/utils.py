@@ -6,6 +6,7 @@ import numpy as np
 from PIL import Image, ImageOps
 import torch.nn.functional as F
 from math import floor, ceil
+from decimal import Decimal
 
 import json
 import os
@@ -254,3 +255,31 @@ def pad_mask_to_max(mask):
         return F.pad(mask, (floor(pad),ceil(pad),0,0), 'constant', True)
     else:  # center on x scale
         return F.pad(mask, (0,0,floor(pad),ceil(pad)), 'constant', True)
+    
+
+def xywh_to_xyxy(bb):
+
+    x, y, w, h = map(Decimal, map(str, bb))
+
+    # upper left
+    x1 = x
+    y1 = y
+    # lower right
+    x2 = x + w
+    y2 = y + h
+
+    out = x1, y1, x2, y2
+
+    return tuple(map(float, out))
+
+
+def xyxy_to_xywh(bb):
+
+    x1, y1, x2, y2 = map(Decimal, map(str, bb))
+
+    w = x2 - x1
+    h = y2 - y1
+
+    out = x1, y1, w, h
+
+    return tuple(map(float, out))

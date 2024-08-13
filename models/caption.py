@@ -57,7 +57,7 @@ class CaptionLoc(nn.Module):
         self.input_proj = nn.Conv2d(in_channels=backbone.num_channels,
                                     out_channels=hidden_dim,
                                     kernel_size=1)
-        self.loc_proj = nn.Linear(7, hidden_dim)
+        self.loc_proj = nn.Linear(1, hidden_dim)
         self.transformer = transformer
         self.mlp = MLP(hidden_dim, 512, vocab_size, 3)
 
@@ -75,9 +75,11 @@ class CaptionLoc(nn.Module):
         t_mask = t_mask.flatten(1)
 
         # location features
-        loc_src = self.loc_proj(loc_feats).unsqueeze(-1)
+        loc_src = loc_feats.unsqueeze(2) # [b, n_feats] -> [b, n_feats, 1]
+        loc_src = self.loc_proj(loc_src)  # [b, n_feats, hidden_dim]
+        loc_src = loc_src.permute(0,2,1)  # [b, hidden_dim, n_feats]
         loc_masks = torch.zeros(
-            (loc_feats.shape[0], 1)).bool().to(t_mask.device)
+            (loc_src.shape[0], loc_src.shape[2])).bool().to(t_mask.device)
 
         # concatenate target and location to target vector
         src = torch.concat([t_src, loc_src], 2)
@@ -158,6 +160,70 @@ class CaptionGlobalLoc(nn.Module):
         return out
     
 
+class CaptionSceneLoc(nn.Module):
+
+    def __init__(self, backbone, transformer, positional_encoding, hidden_dim,
+                 vocab_size, scene_dim=134):
+        super().__init__()
+        self.backbone = backbone
+        self.positional_encoding = positional_encoding
+        self.scene_dim = scene_dim
+        self.input_proj = nn.Conv2d(in_channels=backbone.num_channels,
+                                    out_channels=hidden_dim,
+                                    kernel_size=1)
+        self.loc_proj = nn.Linear(1, hidden_dim)
+        self.scene_emb = nn.Embedding(self.scene_dim, hidden_dim)
+        self.transformer = transformer
+        self.mlp = MLP(hidden_dim, 512, vocab_size, 3)
+
+    def forward(self, t_samples, s_features, loc_feats, target_exp, target_exp_mask, return_attention=False):
+
+        # target features
+        if not isinstance(t_samples, NestedTensor):
+            t_samples = nested_tensor_from_tensor_list(t_samples)
+        t_features = self.backbone(t_samples)['0']
+        t_src, t_mask = t_features.decompose()
+        t_src = self.input_proj(t_src)
+        assert t_mask is not None
+        # flatten vectors
+        t_src = t_src.flatten(2)
+        t_mask = t_mask.flatten(1)
+        
+        # location features
+        loc_src = loc_feats.unsqueeze(2) # [b, n_feats] -> [b, n_feats, 1]
+        loc_src = self.loc_proj(loc_src)  # [b, n_feats, hidden_dim]
+        loc_src = loc_src.permute(0,2,1)  # [b, hidden_dim, n_feats]
+        loc_masks = torch.zeros(
+            (loc_src.shape[0], loc_src.shape[2])).bool().to(t_mask.device)
+
+        # concatenate target and location to target vector
+        target_src = torch.concat([t_src, loc_src], 2)
+        target_mask = torch.concat([t_mask, loc_masks], 1)
+
+        # scene features
+        b, n_feats = s_features.size()
+        
+        s_idx = torch.arange(0, self.scene_dim).repeat((b, 1)).to(t_mask.device)  # long tensor with scene feature idx -> [b, n_feats]
+        s_emb_out = self.scene_emb(s_idx)  # embeddings for scene feature idx -> [b, n_feats, hidden_dim]
+
+        weights = s_features.unsqueeze(-1)  # use input features as weights -> [b, n_feats, 1]
+        s_src = torch.mul(s_emb_out, weights)  # elementwise multiplication -> [b, n_feats, hidden_dim]
+        s_src = s_src.permute(0,2,1)  # -> [b, hidden_dim, n_feats]
+
+        s_mask = torch.zeros((b, n_feats), dtype=bool).to(t_mask.device)  # mask with only False values -> [b, n_feats]
+
+        hs, att = self.transformer(
+            src_t=target_src, mask_t=target_mask, 
+            src_c=s_src, mask_c=s_mask, 
+            tgt=target_exp, tgt_mask=target_exp_mask)
+        out = self.mlp(hs.permute(1, 0, 2))
+        
+        if return_attention:
+            return out, att
+        
+        return out    
+    
+
 class MLP(nn.Module):
     """ Very simple multi-layer perceptron (also called FFN)"""
 
@@ -180,21 +246,25 @@ def build_model(config):
     
     transformer = build_concat_transformer(config)
 
-    use_global = config.use_global_features
-    use_location = config.use_location_features
+    use_global = vars(config).get('use_global_features', None)
+    use_location = vars(config).get('use_location_features', None)
+    use_scene_summaries = vars(config).get('use_scene_summaries', None)
 
-    print(f'global features: {use_global}, location features: {use_location}')
-
+    print(f'global features: {use_global}, location features: {use_location}, scene summaries: {use_scene_summaries}')
+    
     # pick model class
-    if not use_global and not use_location:
-        # default / no global image or loc features
+    if not use_global and not use_location and not use_scene_summaries:
+        # no global image, scene summaries or loc features
         Model = Caption
-    elif not use_global and use_location:
+    elif not use_global and use_location and not use_scene_summaries:
         # loc features
         Model = CaptionLoc
-    elif use_global and use_location:
+    elif use_global and use_location and not use_scene_summaries:
         # global features + loc features
         Model = CaptionGlobalLoc
+    elif not use_global and use_location and use_scene_summaries:
+        # loc features + scene features
+        Model = CaptionSceneLoc
     else:
         raise NotImplementedError()
     

@@ -1,4 +1,5 @@
-*configuration.py
+*configuration*
+!configuration_template.py
 data/*
 .vscode
 bash
